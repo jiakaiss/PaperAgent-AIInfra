@@ -1,0 +1,87 @@
+# Paper Agent 配置文件
+# 复制为 config.yaml 并填入你的实际配置
+# 敏感信息可使用 ${ENV_VAR} 从环境变量读取
+
+# ─── arXiv 抓取配置 ───
+fetch:
+  categories:
+    - cs.DC     # 分布式计算
+    - cs.LG     # 机器学习
+    - cs.AI     # 人工智能
+    - cs.PF     # 性能
+    - cs.NI     # 网络
+    - cs.AR     # 硬件架构
+  keywords:
+    - distributed training
+    - model parallelism
+    - pipeline parallelism
+    - data parallelism
+    - tensor parallelism
+    - inference optimization
+    - model serving
+    - GPU scheduling
+    - GPU cluster
+    - large language model infrastructure
+    - mixture of experts
+    - speculative decoding
+    - KV cache
+    - quantization
+    - model compression
+    - checkpoint
+    - all-reduce
+    - communication optimization
+    - memory optimization
+    - deep learning compiler
+    - operator fusion
+  max_results: 200
+  days_back: 2
+
+# ─── LLM 打分配置 ───
+scoring:
+  model: claude-haiku-4-5       # 使用 Haiku 节省成本
+  batch_size: 10                 # 每次 API 调用处理的论文数
+  min_relevance: 6.0             # 最低 AI Infra 相关度 (0-10)
+  min_quality: 5.0               # 最低质量分 (0-10)
+  top_n: 20                      # 最终推送的论文数上限
+
+# ─── 推送通知配置 ───
+notify:
+  email:
+    enabled: false
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    smtp_user: ${SMTP_USER}
+    smtp_password: ${SMTP_PASSWORD}
+    sender: ${SMTP_SENDER}
+    recipients:
+      - user@example.com
+    use_tls: true
+
+  wecom:
+    enabled: false
+    webhook_url: ${WECOM_WEBHOOK}
+
+  feishu:
+    enabled: false
+    webhook_url: ${FEISHU_WEBHOOK}
+
+  dingtalk:
+    enabled: false
+    webhook_url: ${DINGTALK_WEBHOOK}
+    secret: ${DINGTALK_SECRET}
+
+# ─── 定时任务配置 ───
+schedule:
+  enabled: true
+  cron_hour: 9
+  cron_minute: 0
+  timezone: Asia/Shanghai
+
+# ─── 存储配置 ───
+storage:
+  db_path: paper_agent.db
+
+# ─── 日志配置 ───
+logging:
+  level: INFO
+  file: null    # 设为文件路径以写入日志文件，null 则仅输出到控制台
