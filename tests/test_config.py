@@ -52,3 +52,23 @@ def test_env_var_interpolation():
     assert result == "key=sk-test-12345"
 
     del os.environ["TEST_API_KEY"]
+
+
+def test_env_var_missing_non_strict():
+    """When strict=False, missing env vars become empty strings."""
+    from paper_agent.config import _interpolate_env
+
+    # Ensure the var is not set
+    os.environ.pop("NONEXISTENT_VAR_XYZ", None)
+    result = _interpolate_env("value=${NONEXISTENT_VAR_XYZ}")
+    assert result == "value="
+
+
+def test_env_var_missing_strict():
+    """When strict=True, missing env vars raise ValueError."""
+    import pytest
+    from paper_agent.config import _interpolate_env
+
+    os.environ.pop("NONEXISTENT_VAR_XYZ", None)
+    with pytest.raises(ValueError, match="NONEXISTENT_VAR_XYZ"):
+        _interpolate_env("value=${NONEXISTENT_VAR_XYZ}", strict=True)

@@ -11,17 +11,23 @@ import yaml
 from pydantic import BaseModel, Field
 
 
-def _interpolate_env(value: str) -> str:
-    """Replace ${ENV_VAR} with environment variable values."""
+def _interpolate_env(value: str, strict: bool = False) -> str:
+    """Replace ${ENV_VAR} with environment variable values.
+
+    If strict=False (default), unset variables are left as empty strings.
+    If strict=True, unset variables raise ValueError.
+    """
 
     def replacer(match: re.Match) -> str:
         var_name = match.group(1)
-        env_val = os.environ.get(var_name, "")
-        if not env_val:
-            raise ValueError(
-                f"Environment variable '{var_name}' is not set. "
-                f"Please set it or update config.yaml directly."
-            )
+        env_val = os.environ.get(var_name)
+        if env_val is None:
+            if strict:
+                raise ValueError(
+                    f"Environment variable '{var_name}' is not set. "
+                    f"Please set it or update config.yaml directly."
+                )
+            return ""
         return env_val
 
     return re.sub(r"\$\{(\w+)\}", replacer, value)
