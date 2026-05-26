@@ -15,8 +15,13 @@ from paper_agent.pipeline import Pipeline
 logger = logging.getLogger(__name__)
 
 
-def start_daemon(config: AppConfig) -> None:
-    """Start the scheduler daemon."""
+def start_daemon(config: AppConfig, user_ids: list[str] | None = None) -> None:
+    """Start the scheduler daemon.
+
+    Args:
+        config: Application config
+        user_ids: Optional list of user IDs to run for (None = all users)
+    """
     scheduler = BlockingScheduler(timezone=config.schedule.timezone)
 
     pipeline = Pipeline(config)
@@ -24,7 +29,7 @@ def start_daemon(config: AppConfig) -> None:
     def run_pipeline():
         logger.info("Scheduled pipeline run started...")
         try:
-            pipeline.run()
+            pipeline.run(user_ids=user_ids)
         except Exception as e:
             logger.error(f"Pipeline failed: {e}", exc_info=True)
 
@@ -51,10 +56,11 @@ def start_daemon(config: AppConfig) -> None:
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
+    target = f"users: {', '.join(user_ids)}" if user_ids else "all users"
     logger.info(
         f"Daemon started. Running daily at "
         f"{config.schedule.cron_hour:02d}:{config.schedule.cron_minute:02d} "
-        f"({config.schedule.timezone})"
+        f"({config.schedule.timezone}) for {target}"
     )
     logger.info("Press Ctrl+C to stop.")
 

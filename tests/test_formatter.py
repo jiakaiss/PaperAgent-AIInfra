@@ -26,6 +26,7 @@ def _make_scored_paper(idx: int = 1) -> ScoredPaper:
         relevance_score=8.5,
         quality_score=7.0,
         summary_zh="本文提出了一种新的分布式训练框架。",
+        sub_domain_tags=("distributed_training", "parallelism"),
     )
 
 
@@ -37,7 +38,7 @@ def test_format_markdown():
     assert "Test Paper 1" in result
     assert "Test Paper 2" in result
     assert "8.5" in result
-    assert "cs.DC" in result
+    assert "distributed_training" in result
 
 
 def test_format_markdown_empty():
@@ -52,7 +53,7 @@ def test_format_email_html():
     assert "<html>" in html
     assert "Test Paper 1" in html
     assert "8.5" in html
-    assert "cs.DC" in html
+    assert "distributed_training" in html
 
 
 def test_split_markdown_chunks_short():

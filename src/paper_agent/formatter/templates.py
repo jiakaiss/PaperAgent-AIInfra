@@ -9,12 +9,11 @@ from paper_agent.models import ScoredPaper
 
 def format_paper_line(sp: ScoredPaper, index: int) -> str:
     """Format a single paper as a compact line for messaging."""
-    stars_r = "★" * int(sp.relevance_score) + "☆" * (10 - int(sp.relevance_score))
     return (
         f"**{index}. {sp.paper.title}**\n"
         f"   📊 相关度: {sp.relevance_score:.1f}/10  质量: {sp.quality_score:.1f}/10\n"
         f"   📝 {sp.summary_zh}\n"
-        f"   🏷️ {', '.join(sp.paper.categories)}\n"
+        f"   🏷️ {sp.sub_domain_display}\n"
         f"   🔗 [论文]({sp.paper.abs_url}) | [PDF]({sp.paper.pdf_url})"
     )
 
@@ -34,7 +33,7 @@ def format_markdown(papers: list[ScoredPaper], title: str | None = None) -> str:
         lines.append("")
 
     lines.append("---")
-    lines.append(f"_由 Paper Agent 自动生成推送_")
+    lines.append("_由 Paper Agent 自动生成推送_")
 
     return "\n".join(lines)
 
@@ -51,6 +50,14 @@ def format_email_html(papers: list[ScoredPaper]) -> str:
         authors = ", ".join(sp.paper.authors[:5])
         if len(sp.paper.authors) > 5:
             authors += " et al."
+
+        # Sub-domain tags as colored badges
+        tag_badges = " ".join(
+            f'<span style="background:#fff3e0; color:#e65100; padding:2px 8px; '
+            f'border-radius:12px; font-size:11px; margin-right:4px;">{tag}</span>'
+            for tag in sp.sub_domain_tags
+        ) or '<span style="color:#999; font-size:11px;">general</span>'
+
         rows.append(f"""
         <tr>
             <td style="text-align:center; padding:12px 8px; border-bottom:1px solid #eee;">
@@ -73,9 +80,7 @@ def format_email_html(papers: list[ScoredPaper]) -> str:
                     <span style="background:#e3f2fd; color:#1565c0; padding:2px 8px; border-radius:12px; font-size:12px;">
                         质量 {sp.quality_score:.1f}
                     </span>
-                    <span style="background:#f5f5f5; color:#666; padding:2px 8px; border-radius:12px; font-size:12px;">
-                        {', '.join(sp.paper.categories)}
-                    </span>
+                    {tag_badges}
                 </div>
             </td>
         </tr>""")

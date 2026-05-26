@@ -37,8 +37,8 @@ def cli():
 @click.option("--config", "-c", default="config.yaml", help="Config file path")
 @click.option("--dry-run", is_flag=True, help="Fetch and score but skip notification")
 @click.option("--days-back", "-d", type=int, help="Override days_back config")
-@click.option("--top", "-n", type=int, help="Override top_n config")
-def run(config: str, dry_run: bool, days_back: int | None, top: int | None):
+@click.option("--user", "-u", multiple=True, help="Run for specific user(s) only")
+def run(config: str, dry_run: bool, days_back: int | None, user: tuple[str, ...]):
     """Run the paper pipeline once."""
     from paper_agent.config import load_config
     from paper_agent.pipeline import Pipeline
@@ -50,16 +50,23 @@ def run(config: str, dry_run: bool, days_back: int | None, top: int | None):
         sys.exit(1)
 
     setup_logging(cfg.logging.level, cfg.logging.file)
-    pipeline = Pipeline(cfg)
-    results = pipeline.run(dry_run=dry_run, days_back=days_back, top_n=top)
 
-    click.echo(f"\n✅ Pipeline complete. {len(results)} papers processed.")
+    if not cfg.users:
+        click.echo("Error: No users configured. Edit config.yaml to add users.", err=True)
+        sys.exit(1)
+
+    pipeline = Pipeline(cfg)
+    user_ids = list(user) if user else None
+    results = pipeline.run(dry_run=dry_run, days_back=days_back, user_ids=user_ids)
+
+    total = sum(len(v) for v in results.values())
+    click.echo(f"\n✅ Pipeline complete. {total} papers across {len(results)} user(s).")
 
 
 @cli.command()
 @click.option("--config", "-c", default="config.yaml", help="Config file path")
-@click.option("--no-run", is_flag=True, help="Don't run pipeline on startup")
-def daemon(config: str, no_run: bool):
+@click.option("--user", "-u", multiple=True, help="Run for specific user(s) only")
+def daemon(config: str, user: tuple[str, ...]):
     """Start the scheduler daemon for periodic runs."""
     from paper_agent.config import load_config
 
@@ -75,9 +82,14 @@ def daemon(config: str, no_run: bool):
         click.echo("Error: Scheduler is disabled in config.", err=True)
         sys.exit(1)
 
+    if not cfg.users:
+        click.echo("Error: No users configured.", err=True)
+        sys.exit(1)
+
     from paper_agent.scheduler import start_daemon
 
-    start_daemon(cfg)
+    user_ids = list(user) if user else None
+    start_daemon(cfg, user_ids=user_ids)
 
 
 @cli.command()
@@ -85,14 +97,20 @@ def daemon(config: str, no_run: bool):
 @click.option(
     "--notifier",
     "-n",
-    type=click.Choice(["email", "wecom", "feishu", "dingtalk", "all"]),
+    type=click.Choice(["email", "wecom", "feishu", "dingtalk"]),
     required=True,
     help="Which notifier to test",
 )
-def test(config: str, notifier: str):
-    """Send a test notification to verify config."""
+@click.option(
+    "--user",
+    "-u",
+    required=True,
+    help="User ID to test (must exist in config)",
+)
+def test(config: str, notifier: str, user: str):
+    """Send a test notification to verify config for a specific user."""
     from paper_agent.config import load_config
-    from paper_agent.notifier import create_notifiers, get_notifier_by_name
+    from paper_agent.notifier import get_notifier_by_name
 
     try:
         cfg = load_config(config)
@@ -102,37 +120,36 @@ def test(config: str, notifier: str):
 
     setup_logging(cfg.logging.level, cfg.logging.file)
 
-    if notifier == "all":
-        notifiers = create_notifiers(cfg.notify)
-        if not notifiers:
-            click.echo("No notifiers enabled in config.", err=True)
-            sys.exit(1)
-        for n in notifiers:
-            click.echo(f"Testing {n.name}...")
-            if hasattr(n, "send_test"):
-                ok = n.send_test()
-                status = "✅ Success" if ok else "❌ Failed"
-                click.echo(f"  {status}")
-            else:
-                click.echo(f"  ⚠️ No test method available")
-    else:
-        n = get_notifier_by_name(notifier, cfg.notify)
-        if not n:
-            click.echo(f"Unknown notifier: {notifier}", err=True)
-            sys.exit(1)
+    # Find the user
+    user_cfg = None
+    for u in cfg.users:
+        if u.user_id == user:
+            user_cfg = u
+            break
 
-        click.echo(f"Testing {notifier}...")
-        if hasattr(n, "send_test"):
-            ok = n.send_test()
-            status = "✅ Success" if ok else "❌ Failed"
-            click.echo(status)
-        else:
-            click.echo("⚠️ No test method available")
+    if not user_cfg:
+        available = ", ".join(u.user_id for u in cfg.users)
+        click.echo(f"Error: User '{user}' not found. Available: {available}", err=True)
+        sys.exit(1)
+
+    n = get_notifier_by_name(notifier, user_cfg.notify)
+    if not n:
+        click.echo(f"Error: Unknown notifier: {notifier}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Testing {notifier} for user '{user}'...")
+    if hasattr(n, "send_test"):
+        ok = n.send_test()
+        status = "✅ Success" if ok else "❌ Failed"
+        click.echo(status)
+    else:
+        click.echo("⚠️ No test method available")
 
 
 @cli.command()
 @click.option("--config", "-c", default="config.yaml", help="Config file path")
-def stats(config: str):
+@click.option("--user", "-u", default=None, help="Show stats for specific user")
+def stats(config: str, user: str | None):
     """Show database statistics."""
     from paper_agent.config import load_config
     from paper_agent.storage.database import PaperDatabase
@@ -144,14 +161,36 @@ def stats(config: str):
         sys.exit(1)
 
     db = PaperDatabase(cfg.storage.db_path)
-    info = db.get_stats()
+    info = db.get_stats(user_id=user)
 
     click.echo("\n📊 Paper Agent Statistics")
     click.echo("-" * 30)
-    click.echo(f"  Database:    {info['db_path']}")
-    click.echo(f"  Total sent:  {info['total_papers']}")
-    click.echo(f"  Sent today:  {info['sent_today']}")
-    click.echo(f"  Last sent:   {info['last_sent']}")
+    click.echo(f"  Database:       {info['db_path']}")
+    click.echo(f"  Cached papers:  {info['total_cached']}")
+    click.echo(f"  Total sent:     {info['total_sent']}")
+    click.echo(f"  Sent today:     {info['sent_today']}")
+    click.echo(f"  Last sent:      {info['last_sent']}")
+    click.echo(f"  Users:          {info['user_count']}")
+    if user:
+        click.echo(f"  Filtered for:   {user}")
+
+    # Show configured users
+    if cfg.users:
+        click.echo("\n👥 Configured Users:")
+        for u in cfg.users:
+            display = u.display_name or u.user_id
+            subs = ", ".join(u.subscriptions.sub_domains)
+            notifiers = []
+            if u.notify.email.enabled:
+                notifiers.append("email")
+            if u.notify.wecom.enabled:
+                notifiers.append("wecom")
+            if u.notify.feishu.enabled:
+                notifiers.append("feishu")
+            if u.notify.dingtalk.enabled:
+                notifiers.append("dingtalk")
+            notifier_str = ", ".join(notifiers) if notifiers else "none"
+            click.echo(f"  • {display} ({u.user_id}): [{subs}] → {notifier_str}")
     click.echo()
 
 
@@ -166,11 +205,10 @@ def init(output: str):
 
     template = Path(__file__).parent.parent.parent / "config.example.yaml"
     if not template.exists():
-        # Fallback: look relative to package
         template = Path(__file__).parent.parent / "config.example.yaml"
 
     if not template.exists():
-        # Generate inline
+        # Generate inline with defaults
         from paper_agent.config import AppConfig
 
         import yaml
@@ -182,7 +220,7 @@ def init(output: str):
         shutil.copy(template, output_path)
 
     click.echo(f"✅ Config template created: {output_path}")
-    click.echo("Edit the file and fill in your API keys / webhook URLs.")
+    click.echo("Edit the file to configure users, subscriptions, and notification channels.")
 
 
 if __name__ == "__main__":

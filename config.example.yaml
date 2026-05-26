@@ -2,7 +2,7 @@
 # 复制为 config.yaml 并填入你的实际配置
 # 敏感信息可使用 ${ENV_VAR} 从环境变量读取
 
-# ─── arXiv 抓取配置 ───
+# ─── arXiv 抓取配置（全局共享） ───
 fetch:
   categories:
     - cs.DC     # 分布式计算
@@ -36,41 +36,83 @@ fetch:
   max_results: 200
   days_back: 2
 
-# ─── LLM 打分配置 ───
+# ─── LLM 打分配置（全局共享） ───
 scoring:
   model: claude-haiku-4-5       # 使用 Haiku 节省成本
   batch_size: 10                 # 每次 API 调用处理的论文数
-  min_relevance: 6.0             # 最低 AI Infra 相关度 (0-10)
-  min_quality: 5.0               # 最低质量分 (0-10)
-  top_n: 20                      # 最终推送的论文数上限
 
-# ─── 推送通知配置 ───
-notify:
-  email:
-    enabled: false
-    smtp_host: smtp.gmail.com
-    smtp_port: 587
-    smtp_user: ${SMTP_USER}
-    smtp_password: ${SMTP_PASSWORD}
-    sender: ${SMTP_SENDER}
-    recipients:
-      - user@example.com
-    use_tls: true
+# ─── 用户配置 ───
+# 每个用户可以订阅不同的子领域，使用不同的通知渠道
+#
+# 可用的子领域 (sub_domains):
+#   quantization        - 量化（PTQ, QAT, INT8, INT4, GPTQ, AWQ）
+#   distillation        - 蒸馏（知识蒸馏, teacher-student）
+#   pruning             - 剪枝（结构化/非结构化剪枝, lottery ticket）
+#   sparsity            - 稀疏（稀疏注意力, 2:4/N:M 稀疏）
+#   distributed_training - 分布式训练（数据并行, FSDP, DeepSpeed, ZeRO）
+#   parallelism         - 并行策略（张量/流水线/模型并行, Megatron）
+#   serving             - 推理服务（vLLM, continuous batching, PagedAttention）
+#   speculative_decoding - 投机解码（draft model, speculative inference）
+#   kv_cache            - KV Cache 管理（prefix caching, 注意力优化）
+#   moe                 - 混合专家模型（MoE, expert routing）
+#   compiler            - 深度学习编译器（TVM, XLA, MLIR, FlashAttention）
+#   memory_optimization - 内存优化（激活检查点, offloading）
+#   communication       - 通信优化（all-reduce, all-gather, NCCL）
+#   scheduling          - 调度（GPU 调度, 集群管理）
+#
+# 使用 ["all"] 订阅所有子领域
 
-  wecom:
-    enabled: false
-    webhook_url: ${WECOM_WEBHOOK}
+users:
+  # ─── 示例用户 1: Alice，关注量化和稀疏 ───
+  - user_id: alice
+    display_name: "Alice"
+    subscriptions:
+      sub_domains: [quantization, sparsity, pruning]
+    notify:
+      feishu:
+        enabled: true
+        webhook_url: ${FEISHU_WEBHOOK_ALICE}
+    thresholds:
+      min_relevance: 6.0
+      min_quality: 5.0
+      top_n: 10
 
-  feishu:
-    enabled: false
-    webhook_url: ${FEISHU_WEBHOOK}
+  # ─── 示例用户 2: Bob，关注蒸馏和 MoE ───
+  - user_id: bob
+    display_name: "Bob"
+    subscriptions:
+      sub_domains: [distillation, moe, serving]
+    notify:
+      email:
+        enabled: true
+        smtp_host: smtp.gmail.com
+        smtp_port: 587
+        smtp_user: ${SMTP_USER}
+        smtp_password: ${SMTP_PASSWORD}
+        sender: ${SMTP_SENDER}
+        recipients:
+          - bob@example.com
+        use_tls: true
+    thresholds:
+      min_relevance: 7.0
+      min_quality: 6.0
+      top_n: 5
 
-  dingtalk:
-    enabled: false
-    webhook_url: ${DINGTALK_WEBHOOK}
-    secret: ${DINGTALK_SECRET}
+  # ─── 示例用户 3: 团队频道，接收所有论文 ───
+  - user_id: team_channel
+    display_name: "AI Infra Team"
+    subscriptions:
+      sub_domains: [all]
+    notify:
+      wecom:
+        enabled: true
+        webhook_url: ${WECOM_WEBHOOK}
+    thresholds:
+      min_relevance: 6.0
+      min_quality: 5.0
+      top_n: 20
 
-# ─── 定时任务配置 ───
+# ─── 定时任务配置（全局） ───
 schedule:
   enabled: true
   cron_hour: 9

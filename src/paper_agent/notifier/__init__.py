@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from paper_agent.config import NotifyConfig
+from paper_agent.config import UserNotifyConfig
+from paper_agent.notifier.base import Notifier
 from paper_agent.notifier.dingtalk_notifier import DingTalkNotifier
 from paper_agent.notifier.email_notifier import EmailNotifier
 from paper_agent.notifier.feishu_notifier import FeishuNotifier
@@ -12,12 +13,9 @@ from paper_agent.notifier.wecom_notifier import WeComNotifier
 
 logger = logging.getLogger(__name__)
 
-# Type alias for notifier protocol
-from paper_agent.notifier.base import Notifier
 
-
-def create_notifiers(config: NotifyConfig) -> list[Notifier]:
-    """Create enabled notifiers from config."""
+def create_notifiers_for_user(config: UserNotifyConfig) -> list[Notifier]:
+    """Create enabled notifiers for a single user."""
     notifiers: list[Notifier] = []
 
     if config.email.enabled:
@@ -29,13 +27,10 @@ def create_notifiers(config: NotifyConfig) -> list[Notifier]:
     if config.dingtalk.enabled:
         notifiers.append(DingTalkNotifier(config.dingtalk))
 
-    if not notifiers:
-        logger.warning("No notifiers enabled. Check your config.yaml notify section.")
-
     return notifiers
 
 
-def get_notifier_by_name(name: str, config: NotifyConfig) -> Notifier | None:
+def get_notifier_by_name(name: str, config: UserNotifyConfig) -> Notifier | None:
     """Get a specific notifier by name (for test command)."""
     mapping = {
         "email": EmailNotifier(config.email),
@@ -48,7 +43,7 @@ def get_notifier_by_name(name: str, config: NotifyConfig) -> Notifier | None:
 
 __all__ = [
     "Notifier",
-    "create_notifiers",
+    "create_notifiers_for_user",
     "get_notifier_by_name",
     "EmailNotifier",
     "WeComNotifier",
