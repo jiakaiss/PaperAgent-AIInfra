@@ -271,10 +271,10 @@ def test_superset_keywords():
     pipeline = Pipeline.__new__(Pipeline)
     keywords = pipeline._build_superset_keywords(config)
 
-    # Should include base keyword + quantization keywords + distillation keywords
+    # Should include base keyword + sub-domain names (not all sub-domain keywords)
     assert "base_keyword" in keywords
-    assert "quantization" in keywords  # from quantization sub-domain
-    assert "knowledge distillation" in keywords  # from distillation sub-domain
+    assert "quantization" in keywords  # sub-domain name
+    assert "distillation" in keywords  # sub-domain name
 
 
 @patch("paper_agent.pipeline.ArxivFetcher")

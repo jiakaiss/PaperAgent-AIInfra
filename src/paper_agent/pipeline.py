@@ -51,15 +51,22 @@ class Pipeline:
                 )
 
     def _build_superset_keywords(self, config: AppConfig) -> list[str]:
-        """Union of global fetch keywords + sub-domain keywords for all subscribed sub-domains."""
+        """Build keywords for arXiv search.
+
+        Uses global fetch keywords + sub-domain names (not all sub-domain keywords).
+        The scorer handles precise sub-domain tagging; we just need broad recall.
+        """
         keywords = set(config.fetch.keywords)
 
+        # Add sub-domain names as keywords (e.g., "quantization", "distillation")
+        # but NOT all their associated keywords (that would make the query too long)
         for user in config.users:
             sub_domains = user.subscriptions.sub_domains
             if "all" in sub_domains:
                 sub_domains = list(SUB_DOMAINS.keys())
             for sd in sub_domains:
-                keywords.update(SUB_DOMAINS.get(sd, []))
+                # Just add the sub-domain name itself, formatted for search
+                keywords.add(sd.replace("_", " "))
 
         logger.debug(f"Superset keywords ({len(keywords)}): {sorted(keywords)}")
         return list(keywords)
