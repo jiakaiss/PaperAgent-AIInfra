@@ -28,14 +28,14 @@ class ArxivFetcher:
         self.categories = categories or ["cs.DC", "cs.LG", "cs.AI", "cs.PF"]
         self.keywords = keywords or []
 
-    def _build_queries(self) -> list[str]:
+    def _build_queries(self) -> list[tuple[str, str]]:
         """Build a list of targeted queries instead of one giant OR.
 
         Strategy:
         - Query 1: category-based (broad)
         - Query 2-N: keyword-based, grouped in small batches
         """
-        queries = []
+        queries: list[tuple[str, str]] = []
 
         # Category query: only use specific AI-infra categories (not cs.LG/cs.AI which are too broad)
         infra_categories = [c for c in self.categories if c in ("cs.DC", "cs.PF", "cs.NI", "cs.AR")]
@@ -56,12 +56,15 @@ class ArxivFetcher:
     def _fetch_query(
         self, query: str, max_results: int, cutoff: datetime
     ) -> list[Paper]:
-        """Fetch papers for a single query."""
+        """Fetch papers for a single query with exponential backoff."""
+        # Use main API endpoint (export.arxiv.org is deprecated and rate-limited more aggressively)
         client = arxiv.Client(
             page_size=100,
-            delay_seconds=5.0,
-            num_retries=5,
+            delay_seconds=3.5,
+            num_retries=3,
         )
+        # Override the deprecated export endpoint with the main API
+        client.query_url_format = "https://arxiv.org/api/query?{}"
 
         search = arxiv.Search(
             query=query,
@@ -71,26 +74,42 @@ class ArxivFetcher:
         )
 
         papers: list[Paper] = []
-        try:
-            for result in client.results(search):
-                if result.published < cutoff:
-                    continue
+        max_attempts = 3
 
-                paper = Paper(
-                    arxiv_id=result.entry_id.split("/abs/")[-1],
-                    title=result.title.strip().replace("\n", " "),
-                    authors=[a.name for a in result.authors],
-                    abstract=result.summary.strip().replace("\n", " "),
-                    published=result.published,
-                    categories=list(result.categories),
-                    pdf_url=result.pdf_url,
-                    abs_url=result.entry_id,
-                )
-                papers.append(paper)
-        except arxiv.HTTPError as e:
-            logger.warning(f"arXiv HTTP error: {e}")
-        except Exception as e:
-            logger.warning(f"arXiv fetch error: {e}")
+        for attempt in range(max_attempts):
+            try:
+                for result in client.results(search):
+                    if result.published < cutoff:
+                        continue
+
+                    paper = Paper(
+                        arxiv_id=result.entry_id.split("/abs/")[-1],
+                        title=result.title.strip().replace("\n", " "),
+                        authors=[a.name for a in result.authors],
+                        abstract=result.summary.strip().replace("\n", " "),
+                        published=result.published,
+                        categories=list(result.categories),
+                        pdf_url=result.pdf_url,
+                        abs_url=result.entry_id,
+                    )
+                    papers.append(paper)
+                break  # Success, exit retry loop
+
+            except arxiv.HTTPError as e:
+                if "429" in str(e) and attempt < max_attempts - 1:
+                    # Exponential backoff: 30s, 60s, 120s
+                    wait_time = 30 * (2 ** attempt)
+                    logger.warning(
+                        f"arXiv rate limited, waiting {wait_time}s "
+                        f"(attempt {attempt + 1}/{max_attempts})"
+                    )
+                    time.sleep(wait_time)
+                else:
+                    logger.warning(f"arXiv HTTP error: {e}")
+                    break
+            except Exception as e:
+                logger.warning(f"arXiv fetch error: {e}")
+                break
 
         return papers
 
@@ -99,7 +118,9 @@ class ArxivFetcher:
         cutoff = datetime.now().astimezone() - timedelta(days=days_back)
         queries = self._build_queries()
 
-        logger.info(f"Searching arXiv with {len(queries)} queries (last {days_back} days)")
+        logger.info(
+            f"Searching arXiv with {len(queries)} queries (last {days_back} days)"
+        )
 
         # Collect papers from all queries, dedup by arxiv_id
         seen_ids: set[str] = set()
@@ -120,8 +141,8 @@ class ArxivFetcher:
 
             logger.info(f"  [{name}] got {len(papers)} papers, {new_count} new")
 
-            # Delay between queries to avoid rate limiting
-            time.sleep(3.0)
+            # Delay between queries to stay under rate limit
+            time.sleep(5.0)
 
         # Sort by published date (newest first)
         all_papers.sort(key=lambda p: p.published, reverse=True)

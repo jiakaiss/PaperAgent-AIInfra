@@ -166,7 +166,7 @@ class ClaudeScorer:
             max_tokens=4096,
             system=SYSTEM_PROMPT,
             tools=[SCORE_TOOL],
-            tool_choice={"type": "tool", "name": "score_papers"},
+            tool_choice={"type": "auto"},
             messages=[{"role": "user", "content": user_msg}],
         )
 
