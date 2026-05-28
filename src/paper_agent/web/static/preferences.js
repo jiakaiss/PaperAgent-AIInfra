@@ -58,12 +58,54 @@
         }
     }
 
+    /** Update the mode radio buttons to reflect the given mode. */
+    function _syncModeRadios(mode) {
+        const allRadio = document.getElementById("mode-all");
+        const customRadio = document.getElementById("mode-custom");
+        if (allRadio) allRadio.checked = mode === "all";
+        if (customRadio) customRadio.checked = mode === "custom";
+    }
+
+    /** Update the preferences-panel checkboxes to reflect the given sub-domains. */
+    function _syncCheckboxes(subDomains) {
+        const set = new Set(subDomains);
+        document.querySelectorAll('input[name="sub_domain_pref"]').forEach(function (cb) {
+            cb.checked = set.has(cb.value);
+        });
+    }
+
+    /** Update every chip's `chip-active` class to reflect the given sub-domains. */
+    function _syncChips(subDomains) {
+        const set = new Set(subDomains);
+        document.querySelectorAll(".chip-filterable").forEach(function (chip) {
+            const tag = chip.getAttribute("data-tag");
+            if (set.has(tag)) {
+                chip.classList.add("chip-active");
+            } else {
+                chip.classList.remove("chip-active");
+            }
+        });
+    }
+
+    /**
+     * Synchronize every UI surface (mode radios, sub-domain checkboxes, chip
+     * filter) with the given prefs. Call this after every mutation so the DOM
+     * always reflects localStorage.
+     */
+    function syncAllUI(prefs) {
+        const p = prefs || getPrefs();
+        _syncModeRadios(p.mode);
+        _syncCheckboxes(p.subDomains);
+        _syncChips(p.subDomains);
+    }
+
     /** Set mode ("all" or "custom"), persist, and refresh the paper list. */
     function setMode(mode) {
         const prefs = getPrefs();
         if (mode !== "all" && mode !== "custom") return;
         prefs.mode = mode;
         _persist(prefs);
+        syncAllUI(prefs);
         refreshPaperList();
     }
 
@@ -73,6 +115,7 @@
         const valid = new Set(getValidSubDomains());
         prefs.subDomains = (Array.isArray(tags) ? tags : []).filter((t) => valid.has(t));
         _persist(prefs);
+        syncAllUI(prefs);
         refreshPaperList();
     }
 
@@ -86,6 +129,7 @@
             prefs.subDomains.push(tag);
         }
         _persist(prefs);
+        syncAllUI(prefs);
         refreshPaperList();
     }
 
@@ -189,5 +233,6 @@
         applyPrefsToUrl,
         clearAndReload,
         getValidSubDomains,
+        syncAllUI,
     };
 })();

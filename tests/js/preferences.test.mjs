@@ -1,0 +1,295 @@
+/**
+ * Unit tests for preferences.js using Node's built-in test runner.
+ *
+ * Since preferences.js is written for browsers, this harness mocks
+ * `document`, `localStorage`, `window`, and `URLSearchParams` just
+ * enough to exercise the sync paths.
+ *
+ * Run with:  node --test tests/js/preferences.test.mjs
+ */
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PREFS_SRC = readFileSync(
+    join(__dirname, "..", "..", "src", "paper_agent", "web", "static", "preferences.js"),
+    "utf-8",
+);
+
+/** Build a fake DOM with N chip elements and 14 checkboxes, then eval preferences.js. */
+function makeEnv(opts = {}) {
+    const { initialPrefs = null, validTags = ["quantization", "moe", "compiler"] } = opts;
+
+    const store = new Map();
+    if (initialPrefs) {
+        store.set("paper_agent_prefs", JSON.stringify(initialPrefs));
+    }
+
+    const localStorage = {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => {
+            store.set(k, v);
+        },
+        removeItem: (k) => {
+            store.delete(k);
+        },
+        _store: store,
+    };
+
+    // Mock elements: classList with add/remove tracking
+    function makeElement(tag, attrs = {}) {
+        const el = {
+            tag,
+            id: attrs.id || null,
+            name: attrs.name || null,
+            value: attrs.value || null,
+            hidden: false,
+            checked: attrs.checked || false,
+            innerHTML: attrs.innerHTML || "",
+            textContent: attrs.textContent || "",
+            classList: {
+                _classes: new Set(attrs.classes || []),
+                add(c) {
+                    this._classes.add(c);
+                },
+                remove(c) {
+                    this._classes.delete(c);
+                },
+                has(c) {
+                    return this._classes.has(c);
+                },
+            },
+            getAttribute(k) {
+                if (k === "data-tag") return attrs["data-tag"] || null;
+                return attrs[k] || null;
+            },
+            setAttribute(k, v) {
+                attrs[k] = v;
+            },
+            _listeners: {},
+            addEventListener(type, fn) {
+                this._listeners[type] = this._listeners[type] || [];
+                this._listeners[type].push(fn);
+            },
+        };
+        return el;
+    }
+
+    // Build elements
+    const serverContextEl = makeElement("script", {
+        id: "server-context",
+        textContent: JSON.stringify({ allSubDomains: validTags }),
+    });
+    const modeAll = makeElement("input", { id: "mode-all", name: "mode", value: "all" });
+    const modeCustom = makeElement("input", {
+        id: "mode-custom",
+        name: "mode",
+        value: "custom",
+    });
+    const checkboxes = validTags.map((t) =>
+        makeElement("input", { name: "sub_domain_pref", value: t })
+    );
+    // Two chips for quantization (regression test for "all chips for the same tag toggle together")
+    const chips = [
+        makeElement("button", { "data-tag": "quantization", classes: ["chip-filterable"] }),
+        makeElement("button", { "data-tag": "moe", classes: ["chip-filterable"] }),
+        makeElement("button", { "data-tag": "compiler", classes: ["chip-filterable"] }),
+        makeElement("button", { "data-tag": "quantization", classes: ["chip-filterable"] }),
+    ];
+
+    const elementsById = {
+        "server-context": serverContextEl,
+        "mode-all": modeAll,
+        "mode-custom": modeCustom,
+        "preferences-panel": makeElement("aside", { id: "preferences-panel" }),
+        "preferences-toggle": makeElement("button", { id: "preferences-toggle" }),
+        "preferences-close": makeElement("button", { id: "preferences-close" }),
+        "paper-list-container": makeElement("div", { id: "paper-list-container" }),
+    };
+
+    const allElements = [
+        serverContextEl,
+        modeAll,
+        modeCustom,
+        ...checkboxes,
+        ...chips,
+        ...Object.values(elementsById),
+    ];
+
+    const document = {
+        getElementById: (id) => elementsById[id] || null,
+        querySelectorAll: (sel) => {
+            if (sel === ".chip-filterable") return chips;
+            if (sel === 'input[name="sub_domain_pref"]') return checkboxes;
+            if (sel === 'input[name="sub_domain_pref"]:checked')
+                return checkboxes.filter((c) => c.checked);
+            if (sel === 'input[name="mode"]') return [modeAll, modeCustom];
+            if (sel === ".search-input") return [];
+            return [];
+        },
+        querySelector: (sel) => {
+            if (sel === ".search-input") return null;
+            return null;
+        },
+        addEventListener: () => {},
+    };
+
+    const window = {
+        location: { search: "", href: "/" },
+        history: { replaceState: () => {} },
+        PaperAgentPrefs: null,
+    };
+
+    // Mock htmx so refreshPaperList() takes the no-op branch instead of fetch()
+    const htmx = { ajax: () => {} };
+
+    // Expose globals and eval the module
+    const fakeGlobal = {
+        window,
+        document,
+        localStorage,
+        URLSearchParams: globalThis.URLSearchParams,
+        Set: globalThis.Set,
+        Array: globalThis.Array,
+        JSON: globalThis.JSON,
+        Object: globalThis.Object,
+        fetch: async () => ({ text: async () => "" }),
+        htmx,
+        console: globalThis.console,
+    };
+    fakeGlobal.globalThis = fakeGlobal;
+
+    // Run preferences.js in this fake scope
+    const wrappedSrc = `(function(window, document, localStorage, URLSearchParams, Set, Array, JSON, Object, fetch, htmx, console, globalThis) { ${PREFS_SRC} })(window, document, localStorage, URLSearchParams, Set, Array, JSON, Object, fetch, htmx, console, globalThis);`;
+    // eslint-disable-next-line no-eval
+    eval(wrappedSrc);
+
+    return {
+        PaperAgentPrefs: window.PaperAgentPrefs,
+        elements: { modeAll, modeCustom, checkboxes, chips, serverContextEl },
+        localStorage,
+        store,
+    };
+}
+
+test("syncAllUI adds chip-active to selected chips and removes from others", () => {
+    const env = makeEnv({ initialPrefs: { mode: "custom", subDomains: ["quantization"] } });
+    env.PaperAgentPrefs.syncAllUI({ mode: "custom", subDomains: ["quantization"] });
+
+    // quantization chips (both of them) should be active
+    const qChips = env.elements.chips.filter((c) => c.getAttribute("data-tag") === "quantization");
+    assert.equal(qChips.length, 2);
+    for (const c of qChips) {
+        assert.equal(c.classList.has("chip-active"), true, "quantization chip should be active");
+    }
+    // moe and compiler chips should NOT be active
+    const moeChip = env.elements.chips.find((c) => c.getAttribute("data-tag") === "moe");
+    assert.equal(moeChip.classList.has("chip-active"), false, "moe chip should NOT be active");
+});
+
+test("syncAllUI syncs checkboxes with subDomains", () => {
+    const env = makeEnv();
+    env.PaperAgentPrefs.syncAllUI({ mode: "custom", subDomains: ["quantization", "moe"] });
+
+    const qCb = env.elements.checkboxes.find((c) => c.value === "quantization");
+    const mCb = env.elements.checkboxes.find((c) => c.value === "moe");
+    const cCb = env.elements.checkboxes.find((c) => c.value === "compiler");
+    assert.equal(qCb.checked, true);
+    assert.equal(mCb.checked, true);
+    assert.equal(cCb.checked, false);
+});
+
+test("syncAllUI syncs mode radio buttons", () => {
+    const env = makeEnv();
+
+    env.PaperAgentPrefs.syncAllUI({ mode: "custom", subDomains: [] });
+    assert.equal(env.elements.modeAll.checked, false);
+    assert.equal(env.elements.modeCustom.checked, true);
+
+    env.PaperAgentPrefs.syncAllUI({ mode: "all", subDomains: [] });
+    assert.equal(env.elements.modeAll.checked, true);
+    assert.equal(env.elements.modeCustom.checked, false);
+});
+
+test("toggleSubDomain flips chip-active on AND off", () => {
+    const env = makeEnv({ initialPrefs: { mode: "custom", subDomains: [] } });
+    const qChip = env.elements.chips[0];
+
+    // Initial: no active class
+    assert.equal(qChip.classList.has("chip-active"), false);
+
+    // Click to activate
+    env.PaperAgentPrefs.toggleSubDomain("quantization");
+    assert.equal(qChip.classList.has("chip-active"), true, "chip should be active after toggle-on");
+
+    // Click again to deactivate
+    env.PaperAgentPrefs.toggleSubDomain("quantization");
+    assert.equal(
+        qChip.classList.has("chip-active"),
+        false,
+        "chip should be inactive after toggle-off"
+    );
+});
+
+test("toggleSubDomain also flips the matching checkbox", () => {
+    const env = makeEnv({ initialPrefs: { mode: "custom", subDomains: [] } });
+    const qCb = env.elements.checkboxes.find((c) => c.value === "quantization");
+
+    assert.equal(qCb.checked, false);
+    env.PaperAgentPrefs.toggleSubDomain("quantization");
+    assert.equal(qCb.checked, true, "checkbox should be checked after toggle-on");
+    env.PaperAgentPrefs.toggleSubDomain("quantization");
+    assert.equal(qCb.checked, false, "checkbox should be unchecked after toggle-off");
+});
+
+test("toggleSubDomain persists to localStorage", () => {
+    const env = makeEnv({ initialPrefs: { mode: "custom", subDomains: [] } });
+
+    env.PaperAgentPrefs.toggleSubDomain("quantization");
+    const stored = JSON.parse(env.store.get("paper_agent_prefs"));
+    assert.deepEqual(stored.subDomains, ["quantization"]);
+
+    env.PaperAgentPrefs.toggleSubDomain("moe");
+    const stored2 = JSON.parse(env.store.get("paper_agent_prefs"));
+    assert.deepEqual(stored2.subDomains, ["quantization", "moe"]);
+});
+
+test("regression: chip click end-to-end (class + checkbox + localStorage)", () => {
+    // This is the exact scenario from the bug report:
+    // "clicking a chip updates the paper count but doesn't change its color"
+    const env = makeEnv({ initialPrefs: { mode: "custom", subDomains: [] } });
+
+    const qChip = env.elements.chips[0]; // quantization chip
+    const qCb = env.elements.checkboxes.find((c) => c.value === "quantization");
+
+    // Pre-state: chip inactive, checkbox unchecked, subDomains empty
+    assert.equal(qChip.classList.has("chip-active"), false);
+    assert.equal(qCb.checked, false);
+
+    // Act: click the chip (calls toggleChip → toggleSubDomain → syncAllUI)
+    env.PaperAgentPrefs.toggleChip("quantization");
+
+    // Post-state: chip active, checkbox checked, localStorage has the tag
+    assert.equal(qChip.classList.has("chip-active"), true, "chip should turn blue");
+    assert.equal(qCb.checked, true, "preferences-panel checkbox should check");
+    const stored = JSON.parse(env.store.get("paper_agent_prefs"));
+    assert.deepEqual(stored.subDomains, ["quantization"]);
+});
+
+test("all chips for the same tag toggle together", () => {
+    const env = makeEnv({ initialPrefs: { mode: "custom", subDomains: [] } });
+
+    // Click the FIRST quantization chip
+    env.PaperAgentPrefs.toggleChip("quantization");
+
+    // BOTH quantization chips should now be active
+    const qChips = env.elements.chips.filter((c) => c.getAttribute("data-tag") === "quantization");
+    assert.equal(qChips.length, 2);
+    for (const c of qChips) {
+        assert.equal(c.classList.has("chip-active"), true);
+    }
+});

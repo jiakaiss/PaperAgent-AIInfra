@@ -3,7 +3,7 @@
  *
  * Runs on DOMContentLoaded:
  *  1. Apply URL mode override (?mode=...) to localStorage
- *  2. Sync preferences panel UI to current localStorage prefs
+ *  2. Sync all UI surfaces (radios, checkboxes, chips) to current prefs
  *  3. Wire up event listeners (mode toggle, checkboxes, chips, preferences panel)
  *  4. Trigger the initial HTMX load of /_paper_list
  */
@@ -13,23 +13,19 @@ document.addEventListener("DOMContentLoaded", function () {
     // 1. Apply any URL ?mode= override
     PaperAgentPrefs.applyPrefsToUrl();
 
-    // 2. Sync panel to prefs
-    const prefs = PaperAgentPrefs.getPrefs();
-    _syncModeRadios(prefs.mode);
-    _syncCheckboxes(prefs.subDomains);
-    _syncChips(prefs.subDomains);
+    // 2. Sync all UI surfaces to prefs (single entry point)
+    PaperAgentPrefs.syncAllUI();
 
     // 3. Wire event listeners
 
-    // Mode toggle radios
+    // Mode toggle radios — setMode() internally calls syncAllUI + refreshPaperList
     document.querySelectorAll('input[name="mode"]').forEach(function (radio) {
         radio.addEventListener("change", function () {
             PaperAgentPrefs.setMode(this.value);
-            _syncChips(PaperAgentPrefs.getPrefs().subDomains);
         });
     });
 
-    // Sub-domain checkboxes
+    // Sub-domain checkboxes — setSubDomains() internally calls syncAllUI + refreshPaperList
     document.querySelectorAll('input[name="sub_domain_pref"]').forEach(function (cb) {
         cb.addEventListener("change", function () {
             const checked = Array.from(
@@ -38,7 +34,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 return el.value;
             });
             PaperAgentPrefs.setSubDomains(checked);
-            _syncChips(checked);
         });
     });
 
@@ -73,29 +68,3 @@ document.addEventListener("DOMContentLoaded", function () {
         htmx.ajax("GET", url, { target: "#paper-list-container", swap: "innerHTML" });
     }
 });
-
-function _syncModeRadios(mode) {
-    const allRadio = document.getElementById("mode-all");
-    const customRadio = document.getElementById("mode-custom");
-    if (allRadio) allRadio.checked = mode === "all";
-    if (customRadio) customRadio.checked = mode === "custom";
-}
-
-function _syncCheckboxes(subDomains) {
-    const set = new Set(subDomains);
-    document.querySelectorAll('input[name="sub_domain_pref"]').forEach(function (cb) {
-        cb.checked = set.has(cb.value);
-    });
-}
-
-function _syncChips(subDomains) {
-    const set = new Set(subDomains);
-    document.querySelectorAll(".chip-filterable").forEach(function (chip) {
-        const tag = chip.getAttribute("data-tag");
-        if (set.has(tag)) {
-            chip.classList.add("chip-active");
-        } else {
-            chip.classList.remove("chip-active");
-        }
-    });
-}
