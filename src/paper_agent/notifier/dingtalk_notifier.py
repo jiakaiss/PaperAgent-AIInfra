@@ -87,7 +87,7 @@ class DingTalkNotifier:
 
         all_ok = True
         for i, chunk in enumerate(chunks):
-            logger.info(f"Sending DingTalk message {i+1}/{len(chunks)}...")
+            logger.info(f"Sending DingTalk message {i + 1}/{len(chunks)}...")
             if not self._send_message(chunk):
                 all_ok = False
 

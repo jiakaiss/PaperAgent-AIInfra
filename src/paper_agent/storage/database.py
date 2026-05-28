@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Generator
 
 from paper_agent.models import Paper, ScoredPaper
 
@@ -24,9 +24,10 @@ class PaperDatabase:
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
         try:
             yield conn
             conn.commit()
@@ -74,9 +75,7 @@ class PaperDatabase:
     def is_cached(self, arxiv_id: str) -> bool:
         """Check if a paper is already in the cache (scored)."""
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM papers WHERE arxiv_id = ?", (arxiv_id,)
-            ).fetchone()
+            row = conn.execute("SELECT 1 FROM papers WHERE arxiv_id = ?", (arxiv_id,)).fetchone()
             return row is not None
 
     def filter_uncached(self, arxiv_ids: list[str]) -> list[str]:
@@ -189,12 +188,109 @@ class PaperDatabase:
                     (user_id, sp.paper.arxiv_id, now),
                 )
 
+    def _build_filter_clause(
+        self,
+        sub_domains: set[str] | None = None,
+        search: str | None = None,
+    ) -> tuple[str, list[str]]:
+        """Build a WHERE clause and parameter list for paper filtering.
+
+        Returns ``(clause, params)`` where ``clause`` is either an empty string
+        or starts with `` WHERE ...``.
+        """
+        conditions: list[str] = []
+        params: list[str] = []
+
+        if sub_domains:
+            tag_clauses = []
+            for tag in sub_domains:
+                tag_clauses.append("sub_domain_tags LIKE ?")
+                params.append(f'%"{tag}"%')
+            conditions.append(f"({' OR '.join(tag_clauses)})")
+
+        if search:
+            conditions.append("title LIKE ?")
+            params.append(f"%{search}%")
+
+        if conditions:
+            return " WHERE " + " AND ".join(conditions), params
+        return "", params
+
+    def _row_to_scored_paper(self, row: sqlite3.Row) -> ScoredPaper:
+        """Convert a ``papers`` table row into a :class:`ScoredPaper`."""
+        tags = json.loads(row["sub_domain_tags"]) if row["sub_domain_tags"] else []
+        paper = Paper(
+            arxiv_id=row["arxiv_id"],
+            title=row["title"],
+            authors=[a.strip() for a in row["authors"].split(",")],
+            abstract=row["abstract"],
+            published=datetime.fromisoformat(row["published"]),
+            categories=[c.strip() for c in row["categories"].split(",")],
+            pdf_url=row["pdf_url"],
+            abs_url=row["abs_url"],
+        )
+        return ScoredPaper(
+            paper=paper,
+            relevance_score=row["relevance_score"],
+            quality_score=row["quality_score"],
+            summary_zh=row["summary_zh"],
+            sub_domain_tags=tuple(tags),
+        )
+
+    def list_papers(
+        self,
+        sub_domains: set[str] | None = None,
+        search: str | None = None,
+        limit: int = 25,
+        offset: int = 0,
+    ) -> list[ScoredPaper]:
+        """Return scored papers matching the given filters, sorted by total score.
+
+        Papers are sorted highest-score-first. ``limit`` and ``offset`` control
+        pagination.
+        """
+        where, params = self._build_filter_clause(sub_domains, search)
+        order = " ORDER BY (relevance_score * 0.6 + quality_score * 0.4) DESC"
+        paging = " LIMIT ? OFFSET ?"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM papers{where}{order}{paging}",
+                [*params, limit, offset],
+            ).fetchall()
+        return [self._row_to_scored_paper(r) for r in rows]
+
+    def count_papers(
+        self,
+        sub_domains: set[str] | None = None,
+        search: str | None = None,
+    ) -> int:
+        """Return the number of scored papers matching the given filters."""
+        where, params = self._build_filter_clause(sub_domains, search)
+        with self._connect() as conn:
+            row = conn.execute(f"SELECT COUNT(*) as cnt FROM papers{where}", params).fetchone()
+            return row["cnt"]
+
+    def get_sub_domain_counts(self) -> dict[str, int]:
+        """Return per-sub-domain paper counts for chip badges.
+
+        A paper with multiple tags contributes to each tag's count.
+        """
+        from paper_agent.models import SUB_DOMAINS
+
+        counts: dict[str, int] = {tag: 0 for tag in SUB_DOMAINS}
+        with self._connect() as conn:
+            rows = conn.execute("SELECT sub_domain_tags FROM papers").fetchall()
+        for row in rows:
+            tags = json.loads(row["sub_domain_tags"]) if row["sub_domain_tags"] else []
+            for tag in tags:
+                if tag in counts:
+                    counts[tag] += 1
+        return counts
+
     def get_stats(self, user_id: str | None = None) -> dict:
         """Get database statistics, optionally filtered by user."""
         with self._connect() as conn:
-            total_cached = conn.execute(
-                "SELECT COUNT(*) as cnt FROM papers"
-            ).fetchone()["cnt"]
+            total_cached = conn.execute("SELECT COUNT(*) as cnt FROM papers").fetchone()["cnt"]
 
             if user_id:
                 total_sent = conn.execute(
@@ -211,16 +307,16 @@ class PaperDatabase:
                     (user_id,),
                 ).fetchone()["last"]
             else:
-                total_sent = conn.execute(
-                    "SELECT COUNT(*) as cnt FROM sent_papers"
-                ).fetchone()["cnt"]
+                total_sent = conn.execute("SELECT COUNT(*) as cnt FROM sent_papers").fetchone()[
+                    "cnt"
+                ]
                 today_sent = conn.execute(
                     """SELECT COUNT(*) as cnt FROM sent_papers
                        WHERE date(sent_at) = date('now')"""
                 ).fetchone()["cnt"]
-                last_sent = conn.execute(
-                    "SELECT MAX(sent_at) as last FROM sent_papers"
-                ).fetchone()["last"]
+                last_sent = conn.execute("SELECT MAX(sent_at) as last FROM sent_papers").fetchone()[
+                    "last"
+                ]
 
             # Count unique users
             user_count = conn.execute(

@@ -49,13 +49,11 @@ class ArxivFetcher:
             for i in range(0, len(self.keywords), group_size):
                 group = self.keywords[i : i + group_size]
                 kw_query = " OR ".join(f'all:"{kw}"' for kw in group)
-                queries.append((f"keywords_{i//group_size}", kw_query))
+                queries.append((f"keywords_{i // group_size}", kw_query))
 
         return queries
 
-    def _fetch_query(
-        self, query: str, max_results: int, cutoff: datetime
-    ) -> list[Paper]:
+    def _fetch_query(self, query: str, max_results: int, cutoff: datetime) -> list[Paper]:
         """Fetch papers for a single query with exponential backoff."""
         # Use main API endpoint (export.arxiv.org is deprecated and rate-limited more aggressively)
         client = arxiv.Client(
@@ -98,7 +96,7 @@ class ArxivFetcher:
             except arxiv.HTTPError as e:
                 if "429" in str(e) and attempt < max_attempts - 1:
                     # Exponential backoff: 30s, 60s, 120s
-                    wait_time = 30 * (2 ** attempt)
+                    wait_time = 30 * (2**attempt)
                     logger.warning(
                         f"arXiv rate limited, waiting {wait_time}s "
                         f"(attempt {attempt + 1}/{max_attempts})"
@@ -118,9 +116,7 @@ class ArxivFetcher:
         cutoff = datetime.now().astimezone() - timedelta(days=days_back)
         queries = self._build_queries()
 
-        logger.info(
-            f"Searching arXiv with {len(queries)} queries (last {days_back} days)"
-        )
+        logger.info(f"Searching arXiv with {len(queries)} queries (last {days_back} days)")
 
         # Collect papers from all queries, dedup by arxiv_id
         seen_ids: set[str] = set()

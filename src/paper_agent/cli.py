@@ -195,6 +195,31 @@ def stats(config: str, user: str | None):
 
 
 @cli.command()
+@click.option("--config", "-c", default="config.yaml", help="Config file path")
+@click.option("--host", "-h", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+@click.option("--port", "-p", default=8000, type=int, help="Bind port (default: 8000)")
+def web(config: str, host: str, port: int):
+    """Launch the web UI server."""
+    import uvicorn
+
+    from paper_agent.config import load_config
+
+    try:
+        cfg = load_config(config)
+    except FileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    setup_logging(cfg.logging.level, cfg.logging.file)
+
+    from paper_agent.web.app import create_app
+
+    app = create_app(cfg)
+    click.echo(f"🌐 Paper Agent web UI starting on http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+@cli.command()
 @click.option("--output", "-o", default="config.yaml", help="Output path")
 def init(output: str):
     """Create a template config file."""
@@ -209,9 +234,9 @@ def init(output: str):
 
     if not template.exists():
         # Generate inline with defaults
-        from paper_agent.config import AppConfig
-
         import yaml
+
+        from paper_agent.config import AppConfig
 
         cfg = AppConfig()
         content = yaml.dump(cfg.model_dump(), default_flow_style=False, allow_unicode=True)

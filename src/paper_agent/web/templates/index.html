@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Paper Agent - 论文浏览{% endblock %}
+
+{% block content %}
+<div class="page-layout">
+    {# ── Preferences sidebar ── #}
+    <aside id="preferences-panel" class="preferences-panel" hidden>
+        <div class="preferences-header">
+            <h2>偏好设置</h2>
+            <button id="preferences-close" class="btn btn-sm" type="button">关闭</button>
+        </div>
+
+        <div class="preferences-section">
+            <h3>浏览模式</h3>
+            <div class="mode-toggle">
+                <label>
+                    <input type="radio" name="mode" value="all" id="mode-all">
+                    全量论文
+                </label>
+                <label>
+                    <input type="radio" name="mode" value="custom" id="mode-custom">
+                    自定义领域
+                </label>
+            </div>
+        </div>
+
+        <div class="preferences-section">
+            <h3>关注领域 (sub-domain)</h3>
+            <div class="sub-domain-checkboxes">
+                {% for tag in all_sub_domains %}
+                <label class="checkbox-label">
+                    <input type="checkbox" name="sub_domain_pref" value="{{ tag }}">
+                    <span>{{ tag }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+    </aside>
+
+    {# ── Main content ── #}
+    <section class="main-content">
+        {# Search + filter bar #}
+        <div class="filter-bar">
+            <form class="search-form"
+                  hx-get="/_paper_list"
+                  hx-target="#paper-list-container"
+                  hx-swap="innerHTML">
+                <input type="search"
+                       name="q"
+                       placeholder="搜索标题…"
+                       value="{{ search }}"
+                       class="search-input">
+                <button type="submit" class="btn btn-primary">搜索</button>
+            </form>
+        </div>
+
+        {# Sub-domain chip filter (visible on the main page) #}
+        <div class="chip-filter">
+            <span class="chip-filter-label">领域筛选:</span>
+            {% for tag in all_sub_domains %}
+            <button type="button"
+                    class="chip chip-filterable {% if tag in active_sub_domains %}chip-active{% endif %}"
+                    data-tag="{{ tag }}"
+                    onclick="PaperAgentPrefs.toggleChip('{{ tag }}')">
+                {{ tag }}
+                {% if sub_domain_counts.get(tag, 0) > 0 %}
+                <span class="chip-count">{{ sub_domain_counts[tag] }}</span>
+                {% endif %}
+            </button>
+            {% endfor %}
+        </div>
+
+        {# Paper list container — JS builds the HTMX URL from localStorage prefs #}
+        <div id="paper-list-container">
+            <div class="loading">加载中…</div>
+        </div>
+    </section>
+</div>
+
+{# Pass server-side state to JS #}
+<script id="server-context" type="application/json">
+{
+    "serverMode": {{ mode | tojson }},
+    "serverSubDomains": {{ active_sub_domains | tojson }},
+    "allSubDomains": {{ all_sub_domains | tojson }}
+}
+</script>
+{% endblock %}

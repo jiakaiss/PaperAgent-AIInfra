@@ -30,6 +30,8 @@ paper-agent run --user alice --dry-run -c config.yaml
 paper-agent test --notifier feishu --user alice -c config.yaml
 paper-agent daemon -c config.yaml
 paper-agent stats -c config.yaml
+paper-agent web -c config.yaml                     # launch web UI on 127.0.0.1:8000
+paper-agent web --host 0.0.0.0 --port 9000 -c config.yaml  # custom bind
 ```
 
 On Windows, set `PYTHONIOENCODING=utf-8` before running CLI to avoid GBK encoding errors with emoji output.
@@ -120,6 +122,26 @@ Key methods:
 - `load_cached_papers(ids)`: retrieve previously scored papers
 - `filter_unsent_for_user(user_id, ids)`: IDs not yet sent to specific user
 - `mark_sent(user_id, papers)`: record delivery
+- `list_papers(sub_domains, search, limit, offset)`: paginated filtered list (web UI)
+- `count_papers(sub_domains, search)`: matching count for pagination
+- `get_sub_domain_counts()`: per-tag paper counts for chip badges
+
+Connections are opened with WAL journal mode and a 30-second busy timeout so the web server can read concurrently while the daemon writes.
+
+### Web Frontend (`web/`)
+
+A FastAPI + Jinja2 + HTMX web UI launched by `paper-agent web`. The server is a **stateless reader** over the existing `papers` table — it does not own user identity, sessions, or preference storage.
+
+**Files:**
+- `web/app.py`: `create_app(config)` factory; mounts `/static` and Jinja2 templates.
+- `web/routes.py`: `/` (full page), `/_paper_list` (HTMX partial), `/health`.
+- `web/deps.py`: `get_db()` dependency (per-request `PaperDatabase`).
+- `web/templates/`: `base.html`, `index.html`, `_paper_list.html`.
+- `web/static/`: `style.css`, `preferences.js`, `app.js`, `vendor/htmx.min.js`.
+
+**Preferences live in browser `localStorage`** under the key `paper_agent_prefs` with shape `{ mode: "all" | "custom", subDomains: string[] }`. The client JS (`preferences.js`) reads prefs on load, validates sub-domain tags against `SUB_DOMAINS` keys, and translates them into URL query params (`?sub_domain=...&q=...`) when fetching `/_paper_list` via HTMX. A `?mode=all|custom` URL override writes the value to `localStorage` and strips the param from the address bar.
+
+**Sub-domain chip filter** on the main page and the **preferences panel checkboxes** share the same `subDomains` array in `localStorage`. Toggling either updates the other and re-fetches the paper list.
 
 ### Notifier Plugins (`notifier/`)
 

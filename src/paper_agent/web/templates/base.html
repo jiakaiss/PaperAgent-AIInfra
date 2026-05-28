@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Paper Agent{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/vendor/htmx.min.js"></script>
+    <script src="/static/preferences.js" defer></script>
+    <script src="/static/app.js" defer></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <h1 class="site-title"><a href="/">Paper Agent</a></h1>
+            <p class="site-subtitle">AI Infra 论文浏览器</p>
+            <button id="preferences-toggle" class="btn btn-sm" type="button">偏好设置</button>
+        </div>
+    </header>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <footer class="site-footer">
+        <div class="container">
+            <p>Powered by <code>paper-agent</code></p>
+        </div>
+    </footer>
+</body>
+</html>

@@ -30,28 +30,31 @@ class FeishuNotifier:
         content_lines = []
 
         # Header line
-        content_lines.append([
-            {"tag": "text", "text": f"共筛选出 {len(papers)} 篇高质量 AI Infra 论文"}
-        ])
+        content_lines.append(
+            [{"tag": "text", "text": f"共筛选出 {len(papers)} 篇高质量 AI Infra 论文"}]
+        )
         content_lines.append([{"tag": "text", "text": ""}])
 
         for i, sp in enumerate(papers, 1):
             # Title as link
-            content_lines.append([
-                {"tag": "a", "text": f"{i}. {sp.paper.title}", "href": sp.paper.abs_url}
-            ])
+            content_lines.append(
+                [{"tag": "a", "text": f"{i}. {sp.paper.title}", "href": sp.paper.abs_url}]
+            )
             # Scores
-            content_lines.append([
-                {"tag": "text", "text": f"   📊 相关度: {sp.relevance_score:.1f}/10  质量: {sp.quality_score:.1f}/10"}
-            ])
+            content_lines.append(
+                [
+                    {
+                        "tag": "text",
+                        "text": f"   📊 相关度: {sp.relevance_score:.1f}/10  质量: {sp.quality_score:.1f}/10",
+                    }
+                ]
+            )
             # Summary
-            content_lines.append([
-                {"tag": "text", "text": f"   📝 {sp.summary_zh}"}
-            ])
+            content_lines.append([{"tag": "text", "text": f"   📝 {sp.summary_zh}"}])
             # Categories
-            content_lines.append([
-                {"tag": "text", "text": f"   🏷️ {', '.join(sp.paper.categories)}"}
-            ])
+            content_lines.append(
+                [{"tag": "text", "text": f"   🏷️ {', '.join(sp.paper.categories)}"}]
+            )
             # Blank line separator
             content_lines.append([{"tag": "text", "text": ""}])
 
@@ -119,9 +122,7 @@ class FeishuNotifier:
                 "post": {
                     "zh_cn": {
                         "title": "🧪 Paper Agent 测试",
-                        "content": [
-                            [{"tag": "text", "text": "飞书 Webhook 配置测试成功！"}]
-                        ],
+                        "content": [[{"tag": "text", "text": "飞书 Webhook 配置测试成功！"}]],
                     }
                 }
             },

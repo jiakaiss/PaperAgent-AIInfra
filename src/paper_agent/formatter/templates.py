@@ -52,11 +52,14 @@ def format_email_html(papers: list[ScoredPaper]) -> str:
             authors += " et al."
 
         # Sub-domain tags as colored badges
-        tag_badges = " ".join(
-            f'<span style="background:#fff3e0; color:#e65100; padding:2px 8px; '
-            f'border-radius:12px; font-size:11px; margin-right:4px;">{tag}</span>'
-            for tag in sp.sub_domain_tags
-        ) or '<span style="color:#999; font-size:11px;">general</span>'
+        tag_badges = (
+            " ".join(
+                f'<span style="background:#fff3e0; color:#e65100; padding:2px 8px; '
+                f'border-radius:12px; font-size:11px; margin-right:4px;">{tag}</span>'
+                for tag in sp.sub_domain_tags
+            )
+            or '<span style="color:#999; font-size:11px;">general</span>'
+        )
 
         rows.append(f"""
         <tr>
@@ -94,7 +97,7 @@ def format_email_html(papers: list[ScoredPaper]) -> str:
     </h1>
     <p style="color:#666;">📅 {date_str} | 共筛选出 <strong>{len(papers)}</strong> 篇高质量论文</p>
     <table style="width:100%; border-collapse:collapse;">
-        {''.join(rows)}
+        {"".join(rows)}
     </table>
     <p style="color:#999; font-size:12px; margin-top:20px; text-align:center;">
         由 Paper Agent 自动生成推送
@@ -131,6 +134,6 @@ def split_markdown_chunks(text: str, max_bytes: int = 3800) -> list[str]:
 
     # Add part numbers if multiple chunks
     if len(chunks) > 1:
-        chunks = [f"[{i+1}/{len(chunks)}]\n{c}" for i, c in enumerate(chunks)]
+        chunks = [f"[{i + 1}/{len(chunks)}]\n{c}" for i, c in enumerate(chunks)]
 
     return chunks

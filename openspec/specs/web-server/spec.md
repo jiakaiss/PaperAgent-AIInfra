@@ -1,0 +1,55 @@
+## ADDED Requirements
+
+### Requirement: `paper-agent web` CLI command
+The CLI SHALL expose a `web` subcommand that launches the web server. It SHALL accept `--host` (default `127.0.0.1`) and `--port` (default `8000`) options, plus `--config` to locate `config.yaml`.
+
+#### Scenario: Default launch
+- **WHEN** the operator runs `paper-agent web`
+- **THEN** the server binds to `127.0.0.1:8000` and serves the web UI
+
+#### Scenario: Custom host and port
+- **WHEN** the operator runs `paper-agent web --host 0.0.0.0 --port 9000`
+- **THEN** the server binds to `0.0.0.0:9000`
+
+#### Scenario: Config path is forwarded
+- **WHEN** `paper-agent web --config /etc/paper-agent/config.yaml` is run
+- **THEN** the web app reads its storage path and scoring settings from that file
+
+### Requirement: FastAPI application
+The web layer SHALL be implemented as a FastAPI application. The app SHALL mount Jinja2 templates from `src/paper_agent/web/templates` and static assets from `src/paper_agent/web/static`.
+
+#### Scenario: Templates render
+- **WHEN** a browser requests `/`
+- **THEN** the response is HTML rendered by a Jinja2 template
+
+#### Scenario: Static assets served
+- **WHEN** a browser requests `/static/style.css`
+- **THEN** the response is the CSS file with `Content-Type: text/css`
+
+### Requirement: HTMX partial rendering
+Interactive UI elements (keyword chip filter, pagination, search) SHALL use HTMX `hx-get` attributes to swap the paper-list fragment without full reloads. HTMX JS SHALL be served from `static/vendor/` (no CDN dependency). Mode toggle and sub-domain selection are handled client-side (JS updates `localStorage` and re-issues the HTMX request with new query params).
+
+#### Scenario: Chip filter updates in place
+- **WHEN** the user clicks a sub-domain chip
+- **THEN** only the paper list fragment is re-fetched and swapped; the rest of the page is untouched
+
+### Requirement: PaperDatabase dependency injection
+The FastAPI app SHALL expose `PaperDatabase` via a dependency function so route handlers receive a per-request instance. The database SHALL be opened with SQLite WAL journal mode.
+
+#### Scenario: Concurrent reads while daemon writes
+- **WHEN** the `paper-agent daemon` is inserting scored papers and a web request queries the paper list
+- **THEN** the web request returns successfully without `database is locked`
+
+### Requirement: Health endpoint
+The app SHALL expose `GET /health` returning JSON `{"status": "ok"}` for liveness probes.
+
+#### Scenario: Health check
+- **WHEN** `GET /health` is requested
+- **THEN** the response is `200 OK` with body `{"status": "ok"}`
+
+### Requirement: Graceful shutdown
+On SIGTERM / SIGINT the server SHALL close the SQLite connection and exit cleanly.
+
+#### Scenario: Ctrl-C
+- **WHEN** the operator presses Ctrl-C while `paper-agent web` is running
+- **THEN** the process exits with status 0 and no pending writes are lost
