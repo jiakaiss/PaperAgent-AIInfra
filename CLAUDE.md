@@ -71,7 +71,9 @@ Config structure (no backward compat with single-user format):
 ```python
 AppConfig
 ├── FetchConfig       (global: categories, keywords, max_results, days_back)
-├── ScoringConfig     (global: model, batch_size)
+├── ScoringConfig     (global: model, batch_size, api_key, base_url, max_tokens,
+│                      temperature, tool_choice, abstract_max_length,
+│                      relevance_weight, quality_weight, prompts: PromptsConfig)
 ├── users: list[UserConfig]    # ← per-user
 │   └── UserConfig
 │       ├── user_id, display_name
@@ -87,13 +89,22 @@ Duplicate `user_id` values are rejected by a Pydantic validator.
 
 ### Scoring (`scorer/claude_scorer.py`)
 
-Uses Claude's `tool_use` with `tool_choice={"type": "tool", "name": "score_papers"}` for guaranteed structured output. The `SCORE_TOOL` schema includes:
+Uses Claude's `tool_use` for structured output. The `SCORE_TOOL` schema includes:
 - `relevance_score` (0-10): AI Infra relevance
 - `quality_score` (0-10): overall quality
 - `summary_zh`: Chinese summary
 - `sub_domain_tags` (1-3 tags from the enum): sub-domain classification
 
 Papers are scored in batches (default 10) to reduce API calls.
+
+**Configurable `ScoringConfig` fields** (all optional, with sensible defaults matching prior hardcoded values):
+- `api_key` / `base_url`: LLM API connection. Supports `${ENV_VAR}` interpolation. `api_key=None` falls back to `ANTHROPIC_API_KEY` env var.
+- `max_tokens` (default 4096), `temperature` (default `None` = omitted from API call), `tool_choice` (`"auto"` or `"tool"`).
+- `abstract_max_length` (default 800): chars to keep when truncating abstracts.
+- `relevance_weight` / `quality_weight` (default 0.6 / 0.4): used by `ScoreWeights` / `sort_by_score(papers, weights=...)` for per-user sorting. A warning is logged when the sum isn't ~1.0.
+- `prompts.system_prompt` / `prompts.user_message_template`: optional overrides for the scoring prompts. The user-message template supports `{paper_count}` and `{papers}` placeholders. `None` or empty falls back to the built-in defaults (`SYSTEM_PROMPT`, etc.).
+
+`ScoredPaper.total_score` remains a property using default 0.6/0.4 weights for backward compatibility. Pipeline-level weighted sorting goes through `sort_by_score(papers, weights=ScoreWeights.from_scoring_config(config.scoring))`.
 
 ### Storage (`storage/database.py`)
 
@@ -120,7 +131,7 @@ Protocol-based (structural typing). `create_notifiers_for_user(UserNotifyConfig)
 
 ## Environment Variables
 
-Required:
+Required (unless `scoring.api_key` is set in `config.yaml`):
 - `ANTHROPIC_API_KEY`: Claude API key
 
 Optional (per-user webhook/SMTP credentials configured in config.yaml):

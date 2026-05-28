@@ -11,7 +11,7 @@ import logging
 
 from paper_agent.config import AppConfig, UserConfig
 from paper_agent.fetcher.arxiv_fetcher import ArxivFetcher
-from paper_agent.models import SUB_DOMAINS, ScoredPaper, sort_by_score
+from paper_agent.models import SUB_DOMAINS, ScoredPaper, ScoreWeights, sort_by_score
 from paper_agent.notifier import Notifier, create_notifiers_for_user
 from paper_agent.scorer.claude_scorer import ClaudeScorer
 from paper_agent.storage.database import PaperDatabase
@@ -32,11 +32,9 @@ class Pipeline:
             categories=config.fetch.categories,
             keywords=all_keywords,
         )
-        self.scorer = ClaudeScorer(
-            model=config.scoring.model,
-            batch_size=config.scoring.batch_size,
-        )
+        self.scorer = ClaudeScorer(config=config.scoring)
         self.db = PaperDatabase(config.storage.db_path)
+        self.score_weights = ScoreWeights.from_scoring_config(config.scoring)
 
         # Per-user notifiers: {user_id: [Notifier, ...]}
         self.user_notifiers: dict[str, list[Notifier]] = {}
@@ -46,8 +44,7 @@ class Pipeline:
                 self.user_notifiers[user.user_id] = notifiers
             else:
                 logger.warning(
-                    f"User '{user.user_id}' has no enabled notifiers. "
-                    f"Check their notify config."
+                    f"User '{user.user_id}' has no enabled notifiers. Check their notify config."
                 )
 
     def _build_superset_keywords(self, config: AppConfig) -> list[str]:
@@ -120,9 +117,7 @@ class Pipeline:
         cached_papers = [p for p in papers if p.arxiv_id not in uncached_ids]
         new_papers = [p for p in papers if p.arxiv_id in uncached_ids]
 
-        logger.info(
-            f"  → {len(new_papers)} new, {len(cached_papers)} already cached"
-        )
+        logger.info(f"  → {len(new_papers)} new, {len(cached_papers)} already cached")
 
         # Step 3: Score new papers
         scored_new: list[ScoredPaper] = []
@@ -135,9 +130,7 @@ class Pipeline:
             logger.info("Step 3/5: No new papers to score, using cache...")
 
         # Load cached papers for the fetched IDs
-        scored_cached = self.db.load_cached_papers(
-            [p.arxiv_id for p in cached_papers]
-        )
+        scored_cached = self.db.load_cached_papers([p.arxiv_id for p in cached_papers])
         all_scored = scored_new + scored_cached
 
         if not all_scored:
@@ -154,9 +147,7 @@ class Pipeline:
 
         # Summary
         total_sent = sum(len(v) for v in results.values())
-        logger.info(
-            f"Step 5/5: Complete. {total_sent} papers across {len(users)} user(s)."
-        )
+        logger.info(f"Step 5/5: Complete. {total_sent} papers across {len(users)} user(s).")
 
         return results
 
@@ -174,9 +165,7 @@ class Pipeline:
         sub_domains = user.subscriptions.sub_domains
         if "all" not in sub_domains:
             wanted = set(sub_domains)
-            filtered = [
-                sp for sp in all_scored if set(sp.sub_domain_tags) & wanted
-            ]
+            filtered = [sp for sp in all_scored if set(sp.sub_domain_tags) & wanted]
         else:
             filtered = list(all_scored)
 
@@ -189,7 +178,7 @@ class Pipeline:
         ]
 
         # Sort and limit
-        filtered = sort_by_score(filtered)[: user.thresholds.top_n]
+        filtered = sort_by_score(filtered, weights=self.score_weights)[: user.thresholds.top_n]
 
         # Dedup per user
         ids = [sp.paper.arxiv_id for sp in filtered]
@@ -200,10 +189,7 @@ class Pipeline:
             logger.info(f"  [{display}] No new papers to send")
             return []
 
-        logger.info(
-            f"  [{display}] {len(filtered)} papers matched "
-            f"(sub_domains={sub_domains})"
-        )
+        logger.info(f"  [{display}] {len(filtered)} papers matched (sub_domains={sub_domains})")
 
         # Notify
         notifiers = self.user_notifiers.get(uid, [])

@@ -38,8 +38,37 @@ fetch:
 
 # ─── LLM 打分配置（全局共享） ───
 scoring:
-  model: claude-haiku-4-5       # 使用 Haiku 节省成本
+  model: claude-haiku-4-5       # 模型名称（可换成为其他 Anthropic 模型）
   batch_size: 10                 # 每次 API 调用处理的论文数
+
+  # ─── API 连接配置 ───
+  # api_key: 留空则使用环境变量 ANTHROPIC_API_KEY（推荐通过 ${ENV_VAR} 引用）
+  api_key: ${ANTHROPIC_API_KEY}
+  # base_url: 自定义 API 端点（用于代理 / 网关），留空使用 Anthropic 官方端点
+  # base_url: https://your-proxy.example.com/v1
+
+  # ─── 生成参数 ───
+  max_tokens: 4096               # 每次 API 调用的最大输出 token 数
+  # temperature: 0.3             # 留空使用 SDK 默认（不设置该参数）
+  tool_choice: auto              # "auto" 或 "tool"（强制使用 score_papers 工具）
+  abstract_max_length: 800       # 提交给 LLM 前截断摘要的字符数
+
+  # ─── 评分权重 ───
+  # total_score = relevance * relevance_weight + quality * quality_weight
+  # 建议两者之和为 1.0，不为 1.0 时会输出警告但仍可使用
+  relevance_weight: 0.6          # 相关性权重
+  quality_weight: 0.4            # 质量权重
+
+  # ─── Prompt 自定义（可选） ───
+  # 留空或未设置时使用内置默认 prompt
+  # prompts:
+  #   system_prompt: |
+  #     你是一个专注于 AI Infrastructure 的审稿人。请对论文的相关性和质量打分 (0-10)。
+  #   # 用户消息模板支持 {paper_count} 和 {papers} 两个占位符
+  #   user_message_template: |
+  #     请对以下 {paper_count} 篇论文打分，并使用 score_papers 工具返回结果。
+  #
+  #     {papers}
 
 # ─── 用户配置 ───
 # 每个用户可以订阅不同的子领域，使用不同的通知渠道

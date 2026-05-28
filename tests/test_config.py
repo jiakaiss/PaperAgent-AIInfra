@@ -8,11 +8,11 @@ import yaml
 
 from paper_agent.config import (
     AppConfig,
-    UserConfig,
+    PromptsConfig,
+    ScoringConfig,
     SubscriptionConfig,
-    UserNotifyConfig,
+    UserConfig,
     UserThresholdsConfig,
-    FeishuNotifierConfig,
     load_config,
 )
 
@@ -126,3 +126,130 @@ def test_env_var_missing_strict():
     os.environ.pop("NONEXISTENT_VAR_XYZ", None)
     with pytest.raises(ValueError, match="NONEXISTENT_VAR_XYZ"):
         _interpolate_env("value=${NONEXISTENT_VAR_XYZ}", strict=True)
+
+
+# ─── New scoring config field tests ───
+
+
+def test_scoring_config_defaults():
+    """All new ScoringConfig fields have sensible defaults."""
+    cfg = ScoringConfig()
+    assert cfg.api_key is None
+    assert cfg.base_url is None
+    assert cfg.max_tokens == 4096
+    assert cfg.temperature is None
+    assert cfg.tool_choice == "auto"
+    assert cfg.abstract_max_length == 800
+    assert cfg.relevance_weight == 0.6
+    assert cfg.quality_weight == 0.4
+    assert cfg.prompts.system_prompt is None
+    assert cfg.prompts.user_message_template is None
+
+
+def test_scoring_config_custom_values():
+    """ScoringConfig accepts all new fields."""
+    cfg = ScoringConfig(
+        api_key="sk-ant-test",
+        base_url="https://proxy.example.com/v1",
+        max_tokens=8192,
+        temperature=0.3,
+        tool_choice="tool",
+        abstract_max_length=1200,
+        relevance_weight=0.8,
+        quality_weight=0.2,
+        prompts=PromptsConfig(
+            system_prompt="Custom prompt",
+            user_message_template="Score {paper_count} papers:\n{papers}",
+        ),
+    )
+    assert cfg.api_key == "sk-ant-test"
+    assert cfg.base_url == "https://proxy.example.com/v1"
+    assert cfg.max_tokens == 8192
+    assert cfg.temperature == 0.3
+    assert cfg.tool_choice == "tool"
+    assert cfg.abstract_max_length == 1200
+    assert cfg.relevance_weight == 0.8
+    assert cfg.quality_weight == 0.2
+    assert cfg.prompts.system_prompt == "Custom prompt"
+    assert cfg.prompts.user_message_template == "Score {paper_count} papers:\n{papers}"
+
+
+def test_scoring_config_api_key_env_interpolation():
+    """api_key supports ${ENV_VAR} interpolation through YAML loading."""
+    os.environ["TEST_SCORING_KEY"] = "sk-ant-interpolated"
+    data = {
+        "scoring": {"api_key": "${TEST_SCORING_KEY}"},
+        "users": [],
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(data, f)
+        config_path = f.name
+
+    try:
+        cfg = load_config(config_path)
+        assert cfg.scoring.api_key == "sk-ant-interpolated"
+    finally:
+        os.unlink(config_path)
+        del os.environ["TEST_SCORING_KEY"]
+
+
+def test_scoring_config_weight_warning(caplog):
+    """Weights not summing to ~1.0 emit a warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="paper_agent.config"):
+        ScoringConfig(relevance_weight=0.8, quality_weight=0.8)
+
+    assert any("expected ~1.0" in rec.message for rec in caplog.records)
+
+
+def test_scoring_config_weight_no_warning():
+    """Weights summing to 1.0 do not emit a warning."""
+    import io
+    import logging
+
+    log_stream = io.StringIO()
+    handler = logging.StreamHandler(log_stream)
+    handler.setLevel(logging.WARNING)
+    logger = logging.getLogger("paper_agent.config")
+    logger.addHandler(handler)
+    try:
+        ScoringConfig(relevance_weight=0.7, quality_weight=0.3)
+        assert "expected ~1.0" not in log_stream.getvalue()
+    finally:
+        logger.removeHandler(handler)
+
+
+def test_scoring_config_load_from_yaml():
+    """New scoring fields round-trip through YAML."""
+    data = {
+        "scoring": {
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 2048,
+            "temperature": 0.5,
+            "abstract_max_length": 1000,
+            "relevance_weight": 0.7,
+            "quality_weight": 0.3,
+            "prompts": {
+                "system_prompt": "You are a reviewer.",
+            },
+        },
+        "users": [],
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(data, f)
+        config_path = f.name
+
+    try:
+        cfg = load_config(config_path)
+        assert cfg.scoring.max_tokens == 2048
+        assert cfg.scoring.temperature == 0.5
+        assert cfg.scoring.abstract_max_length == 1000
+        assert cfg.scoring.relevance_weight == 0.7
+        assert cfg.scoring.quality_weight == 0.3
+        assert cfg.scoring.prompts.system_prompt == "You are a reviewer."
+        assert cfg.scoring.prompts.user_message_template is None
+    finally:
+        os.unlink(config_path)

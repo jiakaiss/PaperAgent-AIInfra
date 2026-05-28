@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import anthropic
 
 from paper_agent.models import SUB_DOMAINS, Paper, ScoredPaper
+
+if TYPE_CHECKING:
+    from paper_agent.config import PromptsConfig, ScoringConfig
 
 logger = logging.getLogger(__name__)
 
@@ -123,18 +127,111 @@ SYSTEM_PROMPT = f"""You are an expert reviewer specializing in AI Infrastructure
 Provide concise, accurate Chinese summaries (1-2 sentences)."""
 
 
+_DEFAULT_USER_MESSAGE_TEMPLATE = (
+    "Please score the following {paper_count} papers for AI Infrastructure "
+    "relevance and quality. Use the score_papers tool to provide your scores, "
+    "including sub_domain_tags for each paper.\n\n"
+    "{papers}"
+)
+
+
+def _build_tool_choice(value: str) -> dict:
+    """Convert a ``tool_choice`` config string to the Anthropic API dict form."""
+    if value == "tool":
+        return {"type": "tool", "name": SCORE_TOOL["name"]}
+    # Default: "auto" or any other value → auto
+    return {"type": "auto"}
+
+
 class ClaudeScorer:
-    """Scores papers using Anthropic Claude API with tool_use."""
+    """Scores papers using Anthropic Claude API with tool_use.
+
+    All scoring behavior (API connection, generation parameters, prompts) can
+    be configured via a ``ScoringConfig`` object. Individual kwargs are also
+    accepted for backward compatibility and testing.
+    """
 
     def __init__(
         self,
+        config: ScoringConfig | None = None,
+        *,
         api_key: str | None = None,
-        model: str = "claude-haiku-4-5",
-        batch_size: int = 10,
+        base_url: str | None = None,
+        model: str | None = None,
+        batch_size: int | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tool_choice: str | None = None,
+        abstract_max_length: int | None = None,
+        prompts: PromptsConfig | None = None,
     ):
-        self.client = anthropic.Anthropic(api_key=api_key)
-        self.model = model
-        self.batch_size = batch_size
+        # Pull defaults from config when provided; otherwise fall back to
+        # historical hardcoded values for backward compatibility.
+        if config is not None:
+            api_key = api_key if api_key is not None else config.api_key
+            base_url = base_url if base_url is not None else config.base_url
+            model = model if model is not None else config.model
+            batch_size = batch_size if batch_size is not None else config.batch_size
+            max_tokens = max_tokens if max_tokens is not None else config.max_tokens
+            temperature = temperature if temperature is not None else config.temperature
+            tool_choice = tool_choice if tool_choice is not None else config.tool_choice
+            abstract_max_length = (
+                abstract_max_length
+                if abstract_max_length is not None
+                else config.abstract_max_length
+            )
+            prompts = prompts if prompts is not None else config.prompts
+
+        self.client = anthropic.Anthropic(api_key=api_key, base_url=base_url)
+        self.model = model if model is not None else "claude-haiku-4-5"
+        self.batch_size = batch_size if batch_size is not None else 10
+        self.max_tokens = max_tokens if max_tokens is not None else 4096
+        self.temperature = temperature  # None → omit from API call
+        self.tool_choice = _build_tool_choice(tool_choice or "auto")
+        self.abstract_max_length = abstract_max_length if abstract_max_length is not None else 800
+        self.prompts = prompts
+
+    def _resolve_system_prompt(self) -> str:
+        """Return the system prompt to use, falling back to the default."""
+        if self.prompts and self.prompts.system_prompt:
+            return self.prompts.system_prompt
+        return SYSTEM_PROMPT
+
+    def _build_user_message(self, papers: list[Paper]) -> str:
+        """Build the user message for a batch, using custom template if set."""
+        formatted = self._format_papers(papers)
+        if self.prompts and self.prompts.user_message_template:
+            try:
+                return self.prompts.user_message_template.format(
+                    paper_count=len(papers),
+                    papers=formatted,
+                )
+            except KeyError:
+                # Template references unknown placeholders; still return it
+                # (str.format will leave them as-is if not accessed).
+                logger.warning(
+                    "user_message_template contains unknown placeholders; "
+                    "using partial substitution"
+                )
+                # Use a safe formatter that leaves missing keys untouched
+                from string import Formatter
+
+                class _SafeFormatter(Formatter):
+                    def get_value(self, key, args, kwargs):
+                        try:
+                            return super().get_value(key, args, kwargs)
+                        except (KeyError, IndexError):
+                            return "{" + str(key) + "}"
+
+                return _SafeFormatter().format(
+                    self.prompts.user_message_template,
+                    paper_count=len(papers),
+                    papers=formatted,
+                )
+        return _DEFAULT_USER_MESSAGE_TEMPLATE.format(
+            paper_count=len(papers),
+            papers=formatted,
+        )
 
     def _format_papers(self, papers: list[Paper]) -> str:
         """Format papers for the Claude prompt."""
@@ -145,7 +242,7 @@ class ClaudeScorer:
                 f"Title: {p.title}\n"
                 f"Authors: {', '.join(p.authors[:5])}{'...' if len(p.authors) > 5 else ''}\n"
                 f"Categories: {', '.join(p.categories)}\n"
-                f"Abstract: {p.abstract[:800]}\n"
+                f"Abstract: {p.abstract[: self.abstract_max_length]}\n"
             )
         return "\n".join(parts)
 
@@ -154,21 +251,20 @@ class ClaudeScorer:
         if not papers:
             return []
 
-        user_msg = (
-            f"Please score the following {len(papers)} papers for AI Infrastructure "
-            f"relevance and quality. Use the score_papers tool to provide your scores, "
-            f"including sub_domain_tags for each paper.\n\n"
-            f"{self._format_papers(papers)}"
-        )
+        user_msg = self._build_user_message(papers)
 
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            tools=[SCORE_TOOL],
-            tool_choice={"type": "auto"},
-            messages=[{"role": "user", "content": user_msg}],
-        )
+        kwargs: dict = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "system": self._resolve_system_prompt(),
+            "tools": [SCORE_TOOL],
+            "tool_choice": self.tool_choice,
+            "messages": [{"role": "user", "content": user_msg}],
+        }
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
+
+        response = self.client.messages.create(**kwargs)
 
         scored = []
         for block in response.content:
@@ -203,9 +299,7 @@ class ClaudeScorer:
         for i in range(0, len(papers), self.batch_size):
             batch = papers[i : i + self.batch_size]
             batch_num = i // self.batch_size + 1
-            logger.info(
-                f"Scoring batch {batch_num}/{total_batches} ({len(batch)} papers)..."
-            )
+            logger.info(f"Scoring batch {batch_num}/{total_batches} ({len(batch)} papers)...")
 
             try:
                 scored = self._score_batch(batch)

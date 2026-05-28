@@ -2,22 +2,21 @@
 
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from paper_agent.config import (
     AppConfig,
     FetchConfig,
-    ScoringConfig,
-    UserConfig,
-    SubscriptionConfig,
-    UserNotifyConfig,
-    UserThresholdsConfig,
-    FeishuNotifierConfig,
+    PromptsConfig,
     ScheduleConfig,
+    ScoringConfig,
     StorageConfig,
+    SubscriptionConfig,
+    UserConfig,
+    UserThresholdsConfig,
 )
-from paper_agent.models import Paper, ScoredPaper
+from paper_agent.models import Paper, ScoredPaper, ScoreWeights
 from paper_agent.pipeline import Pipeline
 
 
@@ -27,7 +26,7 @@ def _make_paper(arxiv_id: str = "2401.00001v1") -> Paper:
         title=f"Test Paper {arxiv_id}",
         authors=["Alice", "Bob"],
         abstract="Test abstract about quantization and pruning.",
-        published=datetime(2024, 1, 15, tzinfo=timezone.utc),
+        published=datetime(2024, 1, 15, tzinfo=UTC),
         categories=["cs.DC", "cs.LG"],
         pdf_url=f"https://arxiv.org/pdf/{arxiv_id}",
         abs_url=f"https://arxiv.org/abs/{arxiv_id}",
@@ -313,6 +312,7 @@ def test_pipeline_uses_cache(mock_scorer_cls, mock_fetcher_cls):
 
         # Pre-cache paper 001
         from paper_agent.storage.database import PaperDatabase
+
         db = PaperDatabase(db_path)
         db.cache_papers([_make_scored_paper("001", tags=("distillation",))])
 
@@ -328,3 +328,83 @@ def test_pipeline_uses_cache(mock_scorer_cls, mock_fetcher_cls):
         assert len(results["alice"]) == 2
     finally:
         os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_custom_score_weights(mock_scorer_cls, mock_fetcher_cls):
+    """Pipeline sorts results using configured relevance/quality weights."""
+    mock_fetcher = MagicMock()
+    mock_fetcher.fetch.return_value = [_make_paper("001"), _make_paper("002")]
+    mock_fetcher_cls.return_value = mock_fetcher
+
+    mock_scorer = MagicMock()
+    # Paper 001: high relevance, low quality
+    # Paper 002: low relevance, high quality
+    mock_scorer.score.return_value = [
+        _make_scored_paper("001", relevance=10.0, quality=2.0, tags=("quantization",)),
+        _make_scored_paper("002", relevance=2.0, quality=10.0, tags=("quantization",)),
+    ]
+    mock_scorer_cls.return_value = mock_scorer
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        # Quality-weighted: paper 002 wins (2*0.1 + 10*0.9 = 9.2 vs 10*0.1 + 2*0.9 = 2.8)
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(
+                batch_size=5,
+                relevance_weight=0.1,
+                quality_weight=0.9,
+            ),
+            users=[
+                UserConfig(
+                    user_id="alice",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(min_relevance=0.0, min_quality=0.0, top_n=10),
+                ),
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+
+        pipeline = Pipeline(config)
+        assert pipeline.score_weights == ScoreWeights(0.1, 0.9)
+
+        results = pipeline.run(dry_run=True)
+        # Paper 002 should come first under quality-weighted sorting
+        assert results["alice"][0].paper.arxiv_id == "002"
+        assert results["alice"][1].paper.arxiv_id == "001"
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_passes_scoring_config_to_scorer(mock_scorer_cls):
+    """Pipeline passes the full ScoringConfig to ClaudeScorer."""
+    mock_scorer_cls.return_value = MagicMock()
+
+    scoring = ScoringConfig(
+        model="claude-sonnet-4-5",
+        api_key="sk-test",
+        base_url="https://proxy.example.com",
+        max_tokens=2048,
+        prompts=PromptsConfig(system_prompt="Custom"),
+    )
+    config = AppConfig(
+        fetch=FetchConfig(max_results=10, days_back=3),
+        scoring=scoring,
+        users=[
+            UserConfig(
+                user_id="alice",
+                subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+            ),
+        ],
+        schedule=ScheduleConfig(enabled=False),
+        storage=StorageConfig(db_path=":memory:"),
+    )
+
+    Pipeline(config)
+    mock_scorer_cls.assert_called_once_with(config=scoring)

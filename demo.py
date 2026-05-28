@@ -96,10 +96,7 @@ def main():
 
     # Score with Claude
     logger.info("Scoring papers with Claude...")
-    scorer = ClaudeScorer(
-        model=config.scoring.model,
-        batch_size=config.scoring.batch_size,
-    )
+    scorer = ClaudeScorer(config=config.scoring)
     scored_papers = scorer.score(mock_papers)
     logger.info(f"Scored {len(scored_papers)} papers")
 

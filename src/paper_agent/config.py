@@ -5,13 +5,15 @@ Supports multi-user configuration with per-user subscriptions and notification c
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
-from typing import Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 
 def _interpolate_env(value: str, strict: bool = False) -> str:
@@ -51,9 +53,7 @@ def _interpolate_recursive(obj):
 
 
 class FetchConfig(BaseModel):
-    categories: list[str] = Field(
-        default=["cs.DC", "cs.LG", "cs.AI", "cs.PF", "cs.NI", "cs.AR"]
-    )
+    categories: list[str] = Field(default=["cs.DC", "cs.LG", "cs.AI", "cs.PF", "cs.NI", "cs.AR"])
     keywords: list[str] = Field(
         default=[
             "distributed training",
@@ -84,9 +84,75 @@ class FetchConfig(BaseModel):
     days_back: int = 2
 
 
+class PromptsConfig(BaseModel):
+    """Configurable LLM prompts for paper scoring.
+
+    When a field is None or empty, the scorer falls back to its built-in
+    default prompt (defined as module-level constants in claude_scorer.py).
+
+    The ``user_message_template`` supports ``{paper_count}`` (int) and
+    ``{papers}`` (formatted paper text) placeholders via ``str.format()``.
+    """
+
+    system_prompt: str | None = None
+    user_message_template: str | None = None
+
+
 class ScoringConfig(BaseModel):
+    """LLM-based paper scoring configuration.
+
+    Fields fall into three groups:
+
+    **Model & batching:**
+        - ``model``: Anthropic model name (e.g. ``claude-haiku-4-5``).
+        - ``batch_size``: papers per API call.
+
+    **API connection** (all optional; ``None`` uses SDK/env defaults):
+        - ``api_key``: Anthropic API key. Supports ``${ENV_VAR}`` interpolation.
+          When ``None``, the SDK reads ``ANTHROPIC_API_KEY`` from the env.
+        - ``base_url``: custom API endpoint (proxy / gateway).
+
+    **Generation parameters:**
+        - ``max_tokens``: max output tokens per call (default 4096).
+        - ``temperature``: sampling temperature. ``None`` omits the parameter
+          (SDK default).
+        - ``tool_choice``: ``"auto"`` (let the model decide) or ``"tool"``
+          (force the ``score_papers`` tool).
+        - ``abstract_max_length``: chars to keep when truncating abstracts
+          before sending to the model.
+
+    **Score weighting:**
+        - ``relevance_weight`` / ``quality_weight``: coefficients for
+          ``total_score = relevance * w_r + quality * w_q``. A warning is
+          emitted if they don't sum to ~1.0.
+
+    **Prompts:**
+        - ``prompts``: nested :class:`PromptsConfig` with optional overrides
+          for the system prompt and user-message template.
+    """
+
     model: str = "claude-haiku-4-5"
     batch_size: int = 10
+    api_key: str | None = None
+    base_url: str | None = None
+    max_tokens: int = 4096
+    temperature: float | None = None
+    tool_choice: str = "auto"
+    abstract_max_length: int = 800
+    relevance_weight: float = 0.6
+    quality_weight: float = 0.4
+    prompts: PromptsConfig = Field(default_factory=PromptsConfig)
+
+    @model_validator(mode="after")
+    def _check_weights_sum(self) -> ScoringConfig:
+        total = self.relevance_weight + self.quality_weight
+        if abs(total - 1.0) > 0.01:
+            logger.warning(
+                f"ScoringConfig: relevance_weight ({self.relevance_weight}) + "
+                f"quality_weight ({self.quality_weight}) = {total}, "
+                f"expected ~1.0"
+            )
+        return self
 
 
 # ─── Notifier configs (reused per-user) ───
@@ -180,7 +246,7 @@ class StorageConfig(BaseModel):
 
 class LoggingConfig(BaseModel):
     level: str = "INFO"
-    file: Optional[str] = None
+    file: str | None = None
 
 
 # ─── Top-level config ───
@@ -209,11 +275,10 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(
-            f"Config file not found: {path}\n"
-            f"Run 'paper-agent init' to create a template config."
+            f"Config file not found: {path}\nRun 'paper-agent init' to create a template config."
         )
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
     raw = _interpolate_recursive(raw)
