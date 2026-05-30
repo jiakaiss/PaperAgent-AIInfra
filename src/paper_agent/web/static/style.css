@@ -224,6 +224,13 @@ code {
 .chip-tag { cursor: default; }
 .chip-general { opacity: 0.6; }
 
+/* ── Select all / clear all buttons ── */
+.sub-domain-bulk-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.8rem;
+}
+
 /* ── Time range chips ── */
 .chip-filter-time {
     margin-top: 0.5rem;

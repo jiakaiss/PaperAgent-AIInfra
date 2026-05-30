@@ -87,6 +87,15 @@
         });
     }
 
+    /** Update the toggle-all button text based on current selection. */
+    function _syncToggleButton(subDomains) {
+        const btn = document.getElementById("sub-domain-toggle");
+        if (!btn) return;
+        const allTags = getValidSubDomains();
+        const allSelected = allTags.length > 0 && subDomains.length === allTags.length;
+        btn.textContent = allSelected ? "取消全选" : "全选";
+    }
+
     /** Update time range chips' `chip-active` class to reflect the current since value. */
     function _syncTimeChips(since) {
         document.querySelectorAll(".chip-time").forEach(function (chip) {
@@ -109,6 +118,7 @@
         _syncModeRadios(p.mode);
         _syncCheckboxes(p.subDomains);
         _syncChips(p.subDomains);
+        _syncToggleButton(p.subDomains);
         _syncTimeChips(_currentSince());
     }
 
@@ -130,6 +140,14 @@
         _persist(prefs);
         syncAllUI(prefs);
         refreshPaperList();
+    }
+
+    /** Toggle all sub-domains: select all if not all selected, deselect all if all selected. */
+    function toggleAllSubDomains() {
+        const prefs = getPrefs();
+        const allTags = getValidSubDomains();
+        const allSelected = allTags.length > 0 && prefs.subDomains.length === allTags.length;
+        setSubDomains(allSelected ? [] : allTags);
     }
 
     /** Toggle a single sub-domain tag in/out of the selection. */
@@ -259,6 +277,7 @@
         setSubDomains,
         toggleSubDomain,
         toggleChip,
+        toggleAllSubDomains,
         setSince,
         buildQueryString,
         refreshPaperList,

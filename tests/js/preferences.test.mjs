@@ -101,10 +101,13 @@ function makeEnv(opts = {}) {
         makeElement("button", { "data-tag": "quantization", classes: ["chip-filterable"] }),
     ];
 
+    const subDomainToggle = makeElement("button", { id: "sub-domain-toggle", textContent: "全选" });
+
     const elementsById = {
         "server-context": serverContextEl,
         "mode-all": modeAll,
         "mode-custom": modeCustom,
+        "sub-domain-toggle": subDomainToggle,
         "preferences-panel": makeElement("aside", { id: "preferences-panel" }),
         "preferences-toggle": makeElement("button", { id: "preferences-toggle" }),
         "preferences-close": makeElement("button", { id: "preferences-close" }),
@@ -170,7 +173,7 @@ function makeEnv(opts = {}) {
 
     return {
         PaperAgentPrefs: window.PaperAgentPrefs,
-        elements: { modeAll, modeCustom, checkboxes, chips, serverContextEl },
+        elements: { modeAll, modeCustom, checkboxes, chips, serverContextEl, subDomainToggle },
         localStorage,
         store,
     };
@@ -297,6 +300,63 @@ test("all chips for the same tag toggle together", () => {
 test("setSince function is exposed in global API", () => {
     const env = makeEnv();
     assert.equal(typeof env.PaperAgentPrefs.setSince, "function");
+});
+
+test("toggleAllSubDomains selects all when none selected", () => {
+    const env = makeEnv({ initialPrefs: { mode: "custom", subDomains: [] } });
+    const allTags = ["quantization", "moe", "compiler"];
+
+    env.PaperAgentPrefs.toggleAllSubDomains();
+
+    // All checkboxes should be checked
+    for (const cb of env.elements.checkboxes) {
+        assert.equal(cb.checked, true, `checkbox ${cb.value} should be checked`);
+    }
+
+    // localStorage should contain all tags
+    const stored = JSON.parse(env.store.get("paper_agent_prefs"));
+    assert.deepEqual(stored.subDomains.sort(), allTags.sort());
+
+    // Toggle button text should change to "取消全选"
+    assert.equal(env.elements.subDomainToggle.textContent, "取消全选");
+});
+
+test("toggleAllSubDomains deselects all when all selected", () => {
+    const env = makeEnv({
+        initialPrefs: { mode: "custom", subDomains: ["quantization", "moe", "compiler"] },
+    });
+
+    env.PaperAgentPrefs.toggleAllSubDomains();
+
+    // All checkboxes should be unchecked
+    for (const cb of env.elements.checkboxes) {
+        assert.equal(cb.checked, false, `checkbox ${cb.value} should be unchecked`);
+    }
+
+    // localStorage should have empty subDomains
+    const stored = JSON.parse(env.store.get("paper_agent_prefs"));
+    assert.deepEqual(stored.subDomains, []);
+
+    // Toggle button text should change to "全选"
+    assert.equal(env.elements.subDomainToggle.textContent, "全选");
+});
+
+test("toggleAllSubDomains selects all when partially selected", () => {
+    const env = makeEnv({ initialPrefs: { mode: "custom", subDomains: ["quantization"] } });
+    const allTags = ["quantization", "moe", "compiler"];
+
+    env.PaperAgentPrefs.toggleAllSubDomains();
+
+    // All checkboxes should be checked
+    for (const cb of env.elements.checkboxes) {
+        assert.equal(cb.checked, true, `checkbox ${cb.value} should be checked`);
+    }
+
+    const stored = JSON.parse(env.store.get("paper_agent_prefs"));
+    assert.deepEqual(stored.subDomains.sort(), allTags.sort());
+
+    // Toggle button text should change to "取消全选"
+    assert.equal(env.elements.subDomainToggle.textContent, "取消全选");
 });
 
 test("setSince validates input and accepts valid values", () => {

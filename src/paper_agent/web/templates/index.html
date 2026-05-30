@@ -27,6 +27,12 @@
 
         <div class="preferences-section">
             <h3>关注领域 (sub-domain)</h3>
+            <div class="sub-domain-bulk-actions">
+                <button type="button" class="btn btn-sm" id="sub-domain-toggle"
+                        onclick="PaperAgentPrefs.toggleAllSubDomains()">
+                    全选
+                </button>
+            </div>
             <div class="sub-domain-checkboxes">
                 {% for tag in all_sub_domains %}
                 <label class="checkbox-label">
