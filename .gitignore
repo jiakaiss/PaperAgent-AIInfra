@@ -24,6 +24,10 @@ env/
 *.swp
 *.swo
 
+# Claude Code / OpenCode local data (contains API keys in command history!)
+.claude/
+.opencode/
+
 # Database
 *.db
 *.sqlite
