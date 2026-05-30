@@ -71,6 +71,53 @@
             {% endfor %}
         </div>
 
+        {# Time range chip filter #}
+        <div class="chip-filter chip-filter-time">
+            <span class="chip-filter-label">时间范围:</span>
+            <button type="button"
+                    class="chip chip-time {% if not since %}chip-active{% endif %}"
+                    data-since=""
+                    onclick="PaperAgentPrefs.setSince('')">
+                All time
+            </button>
+            <button type="button"
+                    class="chip chip-time {% if since == '1w' %}chip-active{% endif %}"
+                    data-since="1w"
+                    onclick="PaperAgentPrefs.setSince('1w')">
+                1 week
+            </button>
+            <button type="button"
+                    class="chip chip-time {% if since == '1m' %}chip-active{% endif %}"
+                    data-since="1m"
+                    onclick="PaperAgentPrefs.setSince('1m')">
+                1 month
+            </button>
+            <button type="button"
+                    class="chip chip-time {% if since == '3m' %}chip-active{% endif %}"
+                    data-since="3m"
+                    onclick="PaperAgentPrefs.setSince('3m')">
+                3 months
+            </button>
+            <button type="button"
+                    class="chip chip-time {% if since == '6m' %}chip-active{% endif %}"
+                    data-since="6m"
+                    onclick="PaperAgentPrefs.setSince('6m')">
+                6 months
+            </button>
+            <button type="button"
+                    class="chip chip-time {% if since == '1y' %}chip-active{% endif %}"
+                    data-since="1y"
+                    onclick="PaperAgentPrefs.setSince('1y')">
+                1 year
+            </button>
+            <button type="button"
+                    class="chip chip-time {% if since == '3y' %}chip-active{% endif %}"
+                    data-since="3y"
+                    onclick="PaperAgentPrefs.setSince('3y')">
+                3 years
+            </button>
+        </div>
+
         {# Paper list container — JS builds the HTMX URL from localStorage prefs #}
         <div id="paper-list-container">
             <div class="loading">加载中…</div>
@@ -83,7 +130,8 @@
 {
     "serverMode": {{ mode | tojson }},
     "serverSubDomains": {{ active_sub_domains | tojson }},
-    "allSubDomains": {{ all_sub_domains | tojson }}
+    "allSubDomains": {{ all_sub_domains | tojson }},
+    "serverSince": {{ since | tojson }}
 }
 </script>
 {% endblock %}

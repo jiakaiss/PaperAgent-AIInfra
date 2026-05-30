@@ -87,6 +87,18 @@
         });
     }
 
+    /** Update time range chips' `chip-active` class to reflect the current since value. */
+    function _syncTimeChips(since) {
+        document.querySelectorAll(".chip-time").forEach(function (chip) {
+            const chipSince = chip.getAttribute("data-since");
+            if (chipSince === since) {
+                chip.classList.add("chip-active");
+            } else {
+                chip.classList.remove("chip-active");
+            }
+        });
+    }
+
     /**
      * Synchronize every UI surface (mode radios, sub-domain checkboxes, chip
      * filter) with the given prefs. Call this after every mutation so the DOM
@@ -97,6 +109,7 @@
         _syncModeRadios(p.mode);
         _syncCheckboxes(p.subDomains);
         _syncChips(p.subDomains);
+        _syncTimeChips(_currentSince());
     }
 
     /** Set mode ("all" or "custom"), persist, and refresh the paper list. */
@@ -138,6 +151,22 @@
         toggleSubDomain(tag);
     }
 
+    /** Read the current since value from the active time chip or URL. */
+    function _currentSince() {
+        const activeChip = document.querySelector(".chip-time.chip-active");
+        return activeChip ? activeChip.getAttribute("data-since") || "" : "";
+    }
+
+    /** Set the time range filter, update URL, and refresh the paper list. */
+    function setSince(value) {
+        // Validate: empty string (all time) or one of the valid codes
+        const validValues = ["", "1w", "1m", "3m", "6m", "1y", "3y"];
+        if (!validValues.includes(value)) return;
+
+        _syncTimeChips(value);
+        refreshPaperList();
+    }
+
     /**
      * Build a query string from the current prefs and the given search/page.
      * When mode is "custom", sub-domain tags are included as repeated `sub_domain` params.
@@ -154,6 +183,8 @@
             prefs.subDomains.forEach((t) => params.append("sub_domain", t));
         }
         if (opts.search) params.set("q", opts.search);
+        const since = _currentSince();
+        if (since) params.set("since", since);
         if (opts.page && opts.page > 1) params.set("page", String(opts.page));
         const qs = params.toString();
         return qs ? "?" + qs : "";
@@ -228,6 +259,7 @@
         setSubDomains,
         toggleSubDomain,
         toggleChip,
+        setSince,
         buildQueryString,
         refreshPaperList,
         applyPrefsToUrl,

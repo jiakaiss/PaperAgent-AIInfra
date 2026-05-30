@@ -293,3 +293,26 @@ test("all chips for the same tag toggle together", () => {
         assert.equal(c.classList.has("chip-active"), true);
     }
 });
+
+test("setSince function is exposed in global API", () => {
+    const env = makeEnv();
+    assert.equal(typeof env.PaperAgentPrefs.setSince, "function");
+});
+
+test("setSince validates input and accepts valid values", () => {
+    const env = makeEnv();
+
+    // Valid values should not throw
+    assert.doesNotThrow(() => env.PaperAgentPrefs.setSince(""));
+    assert.doesNotThrow(() => env.PaperAgentPrefs.setSince("1w"));
+    assert.doesNotThrow(() => env.PaperAgentPrefs.setSince("1m"));
+    assert.doesNotThrow(() => env.PaperAgentPrefs.setSince("3m"));
+    assert.doesNotThrow(() => env.PaperAgentPrefs.setSince("6m"));
+    assert.doesNotThrow(() => env.PaperAgentPrefs.setSince("1y"));
+    assert.doesNotThrow(() => env.PaperAgentPrefs.setSince("3y"));
+
+    // Invalid value should be ignored (no throw)
+    assert.doesNotThrow(() => env.PaperAgentPrefs.setSince("invalid"));
+    assert.doesNotThrow(() => env.PaperAgentPrefs.setSince("2m"));
+    assert.doesNotThrow(() => env.PaperAgentPrefs.setSince(null));
+});

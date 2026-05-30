@@ -216,3 +216,161 @@ def test_paper_card_shows_tag_chips(client):
     resp = client.get("/_paper_list?sub_domain=moe")
     assert resp.status_code == 200
     assert "moe" in resp.text
+
+
+# ── Time range filter tests ──
+
+
+def _make_scored_paper_with_date(
+    arxiv_id: str,
+    title: str,
+    published: datetime,
+    tags: tuple[str, ...] = ("quantization",),
+) -> ScoredPaper:
+    """Helper to create a ScoredPaper with a specific publication date."""
+    paper = Paper(
+        arxiv_id=arxiv_id,
+        title=title,
+        authors=["Alice"],
+        abstract="Test abstract",
+        published=published,
+        categories=["cs.DC"],
+        pdf_url=f"https://arxiv.org/pdf/{arxiv_id}",
+        abs_url=f"https://arxiv.org/abs/{arxiv_id}",
+    )
+    return ScoredPaper(
+        paper=paper,
+        relevance_score=8.0,
+        quality_score=7.0,
+        summary_zh="测试论文",
+        sub_domain_tags=tags,
+    )
+
+
+def test_time_range_filter_past_month():
+    """GET /?since=1m returns only papers from the past month."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        db = PaperDatabase(path)
+        now = datetime.now()
+        papers = [
+            _make_scored_paper_with_date(
+                "2401.00001v1", "Old Paper", datetime(2020, 1, 1), ("quantization",)
+            ),
+            _make_scored_paper_with_date(
+                "2401.00002v1",
+                "Recent Paper",
+                datetime(now.year, now.month, max(1, now.day - 5)),
+                ("moe",),
+            ),
+        ]
+        db.cache_papers(papers)
+
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list?since=1m")
+        assert resp.status_code == 200
+        assert "Recent Paper" in resp.text
+        assert "Old Paper" not in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_time_range_invalid_ignored():
+    """GET /?since=invalid ignores the filter and shows all papers."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        db = PaperDatabase(path)
+        papers = [
+            _make_scored_paper_with_date("2401.00001v1", "Old Paper", datetime(2020, 1, 1)),
+            _make_scored_paper_with_date("2401.00002v1", "Recent Paper", datetime(2024, 6, 1)),
+        ]
+        db.cache_papers(papers)
+
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list?since=invalid")
+        assert resp.status_code == 200
+        # Both papers should be shown since invalid filter is ignored
+        assert "Old Paper" in resp.text
+        assert "Recent Paper" in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_time_range_combined_with_sub_domain():
+    """GET /?since=6m&sub_domain=quantization combines filters with AND logic."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        db = PaperDatabase(path)
+        now = datetime.now()
+        papers = [
+            _make_scored_paper_with_date(
+                "2401.00001v1", "Old Quantization", datetime(2020, 1, 1), ("quantization",)
+            ),
+            _make_scored_paper_with_date(
+                "2401.00002v1", "Recent MoE", datetime(now.year, now.month, 1), ("moe",)
+            ),
+            _make_scored_paper_with_date(
+                "2401.00003v1",
+                "Recent Quantization",
+                datetime(now.year, now.month, 2),
+                ("quantization",),
+            ),
+        ]
+        db.cache_papers(papers)
+
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list?since=6m&sub_domain=quantization")
+        assert resp.status_code == 200
+        assert "Recent Quantization" in resp.text
+        assert "Old Quantization" not in resp.text
+        assert "Recent MoE" not in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_time_range_combined_with_search():
+    """GET /?since=1y&q=attention combines time range and search with AND logic."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        db = PaperDatabase(path)
+        now = datetime.now()
+        papers = [
+            _make_scored_paper_with_date(
+                "2401.00001v1", "Old Attention", datetime(2020, 1, 1), ("quantization",)
+            ),
+            _make_scored_paper_with_date(
+                "2401.00002v1", "Recent MoE", datetime(now.year, now.month, 1), ("moe",)
+            ),
+            _make_scored_paper_with_date(
+                "2401.00003v1",
+                "Recent Attention",
+                datetime(now.year, now.month, 2),
+                ("quantization",),
+            ),
+        ]
+        db.cache_papers(papers)
+
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list?since=1y&q=attention")
+        assert resp.status_code == 200
+        assert "Recent Attention" in resp.text
+        assert "Old Attention" not in resp.text
+        assert "Recent MoE" not in resp.text
+    finally:
+        os.unlink(path)

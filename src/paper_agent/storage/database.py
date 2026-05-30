@@ -192,6 +192,7 @@ class PaperDatabase:
         self,
         sub_domains: set[str] | None = None,
         search: str | None = None,
+        published_after: str | None = None,
     ) -> tuple[str, list[str]]:
         """Build a WHERE clause and parameter list for paper filtering.
 
@@ -200,6 +201,10 @@ class PaperDatabase:
         """
         conditions: list[str] = []
         params: list[str] = []
+
+        if published_after:
+            conditions.append("published >= ?")
+            params.append(published_after)
 
         if sub_domains:
             tag_clauses = []
@@ -241,6 +246,7 @@ class PaperDatabase:
         self,
         sub_domains: set[str] | None = None,
         search: str | None = None,
+        published_after: str | None = None,
         limit: int = 25,
         offset: int = 0,
     ) -> list[ScoredPaper]:
@@ -249,7 +255,7 @@ class PaperDatabase:
         Papers are sorted highest-score-first. ``limit`` and ``offset`` control
         pagination.
         """
-        where, params = self._build_filter_clause(sub_domains, search)
+        where, params = self._build_filter_clause(sub_domains, search, published_after)
         order = " ORDER BY (relevance_score * 0.6 + quality_score * 0.4) DESC"
         paging = " LIMIT ? OFFSET ?"
         with self._connect() as conn:
@@ -263,9 +269,10 @@ class PaperDatabase:
         self,
         sub_domains: set[str] | None = None,
         search: str | None = None,
+        published_after: str | None = None,
     ) -> int:
         """Return the number of scored papers matching the given filters."""
-        where, params = self._build_filter_clause(sub_domains, search)
+        where, params = self._build_filter_clause(sub_domains, search, published_after)
         with self._connect() as conn:
             row = conn.execute(f"SELECT COUNT(*) as cnt FROM papers{where}", params).fetchone()
             return row["cnt"]

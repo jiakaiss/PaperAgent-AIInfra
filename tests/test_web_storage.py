@@ -258,3 +258,134 @@ def test_get_sub_domain_counts_empty_db():
         assert len(counts) == 14
     finally:
         os.unlink(db_path)
+
+
+def _make_scored_paper_with_date(
+    arxiv_id: str,
+    title: str,
+    published: datetime,
+    tags: tuple[str, ...] = ("quantization",),
+) -> ScoredPaper:
+    """Helper to create a ScoredPaper with a specific publication date."""
+    paper = Paper(
+        arxiv_id=arxiv_id,
+        title=title,
+        authors=["Alice"],
+        abstract="Test abstract",
+        published=published,
+        categories=["cs.DC"],
+        pdf_url=f"https://arxiv.org/pdf/{arxiv_id}",
+        abs_url=f"https://arxiv.org/abs/{arxiv_id}",
+    )
+    return ScoredPaper(
+        paper=paper,
+        relevance_score=8.0,
+        quality_score=7.0,
+        summary_zh="测试论文",
+        sub_domain_tags=tags,
+    )
+
+
+def test_list_papers_published_after_filter():
+    """Time range filter returns only papers published on or after the given date."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        db = PaperDatabase(db_path)
+        papers = [
+            _make_scored_paper_with_date("2401.00001v1", "Old Paper", datetime(2023, 6, 1)),
+            _make_scored_paper_with_date("2401.00002v1", "Mid Paper", datetime(2024, 1, 15)),
+            _make_scored_paper_with_date("2401.00003v1", "Recent Paper", datetime(2024, 6, 1)),
+        ]
+        db.cache_papers(papers)
+
+        # Filter to papers from 2024-01-01 onwards
+        result = db.list_papers(published_after="2024-01-01", limit=10)
+        assert len(result) == 2
+        ids = {p.paper.arxiv_id for p in result}
+        assert ids == {"2401.00002v1", "2401.00003v1"}
+    finally:
+        os.unlink(db_path)
+
+
+def test_list_papers_published_after_combined_with_sub_domain():
+    """Time range combines with sub-domain using AND logic."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        db = PaperDatabase(db_path)
+        papers = [
+            _make_scored_paper_with_date(
+                "2401.00001v1", "Old Quantization", datetime(2023, 6, 1), ("quantization",)
+            ),
+            _make_scored_paper_with_date(
+                "2401.00002v1", "Recent MoE", datetime(2024, 3, 1), ("moe",)
+            ),
+            _make_scored_paper_with_date(
+                "2401.00003v1", "Recent Quantization", datetime(2024, 6, 1), ("quantization",)
+            ),
+        ]
+        db.cache_papers(papers)
+
+        # Filter: quantization AND published >= 2024-01-01
+        result = db.list_papers(
+            sub_domains={"quantization"}, published_after="2024-01-01", limit=10
+        )
+        assert len(result) == 1
+        assert result[0].paper.arxiv_id == "2401.00003v1"
+    finally:
+        os.unlink(db_path)
+
+
+def test_count_papers_published_after_matches_list():
+    """count_papers with time range matches total from paginating list_papers."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        db = PaperDatabase(db_path)
+        papers = [
+            _make_scored_paper_with_date("2401.00001v1", "Paper 1", datetime(2023, 1, 1)),
+            _make_scored_paper_with_date("2401.00002v1", "Paper 2", datetime(2023, 6, 1)),
+            _make_scored_paper_with_date("2401.00003v1", "Paper 3", datetime(2024, 1, 1)),
+            _make_scored_paper_with_date("2401.00004v1", "Paper 4", datetime(2024, 6, 1)),
+            _make_scored_paper_with_date("2401.00005v1", "Paper 5", datetime(2024, 12, 1)),
+        ]
+        db.cache_papers(papers)
+
+        # Filter to 2024 onwards
+        total = db.count_papers(published_after="2024-01-01")
+        assert total == 3
+
+        # Paginate through all results
+        collected = []
+        offset = 0
+        while offset < total:
+            page = db.list_papers(published_after="2024-01-01", limit=2, offset=offset)
+            collected.extend(page)
+            offset += 2
+        assert len(collected) == total
+    finally:
+        os.unlink(db_path)
+
+
+def test_list_papers_published_after_combined_with_search():
+    """Time range combines with search using AND logic."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        db = PaperDatabase(db_path)
+        papers = [
+            _make_scored_paper_with_date("2401.00001v1", "Old Attention", datetime(2023, 6, 1)),
+            _make_scored_paper_with_date("2401.00002v1", "Recent MoE", datetime(2024, 3, 1)),
+            _make_scored_paper_with_date(
+                "2401.00003v1", "Recent Attention", datetime(2024, 6, 1)
+            ),
+        ]
+        db.cache_papers(papers)
+
+        # Filter: title contains "attention" AND published >= 2024-01-01
+        result = db.list_papers(search="attention", published_after="2024-01-01", limit=10)
+        assert len(result) == 1
+        assert result[0].paper.arxiv_id == "2401.00003v1"
+    finally:
+        os.unlink(db_path)

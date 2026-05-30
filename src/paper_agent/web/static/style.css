@@ -224,6 +224,26 @@ code {
 .chip-tag { cursor: default; }
 .chip-general { opacity: 0.6; }
 
+/* ── Time range chips ── */
+.chip-filter-time {
+    margin-top: 0.5rem;
+}
+
+.chip-time {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    border: 1px solid var(--color-border);
+    background: var(--color-chip-bg);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.chip-time:hover { background: #c7d2fe; }
+
 /* ── Paper list ── */
 .paper-list-header {
     display: flex;

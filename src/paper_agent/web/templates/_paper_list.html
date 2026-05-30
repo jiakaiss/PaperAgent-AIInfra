@@ -44,8 +44,8 @@
 <nav class="pagination" aria-label="Pagination">
     {% if has_prev %}
     <a class="btn btn-page"
-       href="?page={{ page - 1 }}{% if search %}&q={{ search }}{% endif %}{% for tag in active_sub_domains|default([], true) %}&sub_domain={{ tag }}{% endfor %}"
-       hx-get="/_paper_list?page={{ page - 1 }}{% if search %}&q={{ search }}{% endif %}{% for tag in active_sub_domains|default([], true) %}&sub_domain={{ tag }}{% endfor %}"
+       href="?page={{ page - 1 }}{% if search %}&q={{ search }}{% endif %}{% if since %}&since={{ since }}{% endif %}{% for tag in active_sub_domains|default([], true) %}&sub_domain={{ tag }}{% endfor %}"
+       hx-get="/_paper_list?page={{ page - 1 }}{% if search %}&q={{ search }}{% endif %}{% if since %}&since={{ since }}{% endif %}{% for tag in active_sub_domains|default([], true) %}&sub_domain={{ tag }}{% endfor %}"
        hx-target="#paper-list-container"
        hx-swap="innerHTML">← 上一页</a>
     {% else %}
@@ -54,8 +54,8 @@
 
     {% if has_next %}
     <a class="btn btn-page"
-       href="?page={{ page + 1 }}{% if search %}&q={{ search }}{% endif %}{% for tag in active_sub_domains|default([], true) %}&sub_domain={{ tag }}{% endfor %}"
-       hx-get="/_paper_list?page={{ page + 1 }}{% if search %}&q={{ search }}{% endif %}{% for tag in active_sub_domains|default([], true) %}&sub_domain={{ tag }}{% endfor %}"
+       href="?page={{ page + 1 }}{% if search %}&q={{ search }}{% endif %}{% if since %}&since={{ since }}{% endif %}{% for tag in active_sub_domains|default([], true) %}&sub_domain={{ tag }}{% endfor %}"
+       hx-get="/_paper_list?page={{ page + 1 }}{% if search %}&q={{ search }}{% endif %}{% if since %}&since={{ since }}{% endif %}{% for tag in active_sub_domains|default([], true) %}&sub_domain={{ tag }}{% endfor %}"
        hx-target="#paper-list-container"
        hx-swap="innerHTML">下一页 →</a>
     {% else %}
