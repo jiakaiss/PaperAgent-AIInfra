@@ -8,7 +8,6 @@ from paper_agent.models import (
     ScoredPaper,
     ScoreWeights,
     compute_total_score,
-    get_all_sub_domain_keywords,
     sort_by_score,
 )
 
@@ -83,13 +82,6 @@ def test_sub_domains_taxonomy():
     assert "sparsity" in SUB_DOMAINS
     assert isinstance(SUB_DOMAINS["quantization"], list)
     assert len(SUB_DOMAINS["quantization"]) > 0
-
-
-def test_get_all_sub_domain_keywords():
-    keywords = get_all_sub_domain_keywords()
-    assert isinstance(keywords, list)
-    assert len(keywords) > 50  # Should have many keywords across all sub-domains
-    assert "quantization" in keywords
 
 
 def test_paper_frozen():

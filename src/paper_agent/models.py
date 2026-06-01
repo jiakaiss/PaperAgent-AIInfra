@@ -141,12 +141,6 @@ SUB_DOMAINS: dict[str, list[str]] = {
     ],
 }
 
-# Reverse mapping: keyword -> sub-domain (for quick lookup)
-KEYWORD_TO_SUB_DOMAIN: dict[str, str] = {}
-for _sd, _keywords in SUB_DOMAINS.items():
-    for _kw in _keywords:
-        KEYWORD_TO_SUB_DOMAIN[_kw.lower()] = _sd
-
 
 @dataclass(frozen=True)
 class Paper:
@@ -178,7 +172,13 @@ class ScoredPaper:
 
     @property
     def total_score(self) -> float:
-        """Weighted total score (relevance matters more)."""
+        """Weighted total score using default 0.6/0.4 weights.
+
+        .. note::
+            This property uses hardcoded default weights for backward
+            compatibility. For configurable weights, use
+            :func:`compute_total_score` with a :class:`ScoreWeights` instance.
+        """
         return self.relevance_score * 0.6 + self.quality_score * 0.4
 
     @property
@@ -229,11 +229,3 @@ def sort_by_score(
         key=lambda p: compute_total_score(p, weights),
         reverse=True,
     )
-
-
-def get_all_sub_domain_keywords() -> list[str]:
-    """Get a flat list of all keywords across all sub-domains."""
-    keywords = []
-    for kw_list in SUB_DOMAINS.values():
-        keywords.extend(kw_list)
-    return keywords

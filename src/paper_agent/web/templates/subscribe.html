@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}Paper Agent - 订阅推送{% endblock %}
+
+{% block content %}
+<div class="subscribe-page">
+    <div class="subscribe-container">
+        <h1>订阅论文推送</h1>
+        <p class="subscribe-description">
+            填写您的邮箱地址并选择感兴趣的领域，我们将定期为您推送最新的 AI Infra 相关论文。
+        </p>
+
+        <form id="subscribe-form"
+              hx-post="/api/subscribe"
+              hx-target="#subscribe-result"
+              hx-swap="innerHTML"
+              class="subscribe-form">
+
+            <div class="form-group">
+                <label for="email">邮箱地址 <span class="required">*</span></label>
+                <input type="email"
+                       id="email"
+                       name="email"
+                       required
+                       placeholder="your.email@example.com"
+                       class="form-input"
+                       autocomplete="email">
+                <small class="form-hint">我们将使用此邮箱发送论文推送</small>
+            </div>
+
+            <div class="form-group">
+                <label>感兴趣的领域 <span class="required">*</span></label>
+                <p class="form-hint">选择您关注的研究方向（至少选择一个）</p>
+
+                <div class="sub-domain-grid">
+                    {% for tag in all_sub_domains %}
+                    <label class="checkbox-card">
+                        <input type="checkbox"
+                               name="sub_domain"
+                               value="{{ tag }}">
+                        <span class="checkbox-card-label">{{ tag }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" id="subscribe-btn" class="btn btn-primary btn-lg">
+                    订阅推送
+                </button>
+            </div>
+        </form>
+
+        <div id="subscribe-result" class="subscribe-result">
+            {# HTMX will inject success/error message here #}
+        </div>
+
+        <script>
+            // Client-side validation for sub-domain selection
+            // Use htmx:beforeRequest to properly prevent HTMX from submitting
+            document.getElementById('subscribe-form').addEventListener('htmx:beforeRequest', function(e) {
+                var checked = document.querySelectorAll('input[name="sub_domain"]:checked');
+
+                if (checked.length === 0) {
+                    // Prevent HTMX from sending the request
+                    e.preventDefault();
+                    // Show inline error message
+                    showValidationError();
+                }
+            });
+
+            function showValidationError() {
+                var resultDiv = document.getElementById('subscribe-result');
+                resultDiv.innerHTML = '<div class="alert alert-error"><h3>请选择领域</h3><p>请至少选择一个感兴趣的领域后再提交。</p></div>';
+                // Scroll to error message
+                resultDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+
+            // Hide error when user selects a checkbox
+            document.querySelectorAll('input[name="sub_domain"]').forEach(function(checkbox) {
+                checkbox.addEventListener('change', function() {
+                    var checked = document.querySelectorAll('input[name="sub_domain"]:checked');
+                    var resultDiv = document.getElementById('subscribe-result');
+                    if (checked.length > 0 && resultDiv.querySelector('.alert-error')) {
+                        resultDiv.innerHTML = '';
+                    }
+                });
+            });
+        </script>
+
+        <div id="subscribe-result" class="subscribe-result">
+            {# HTMX will inject success/error message here #}
+        </div>
+    </div>
+</div>
+{% endblock %}

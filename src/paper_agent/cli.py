@@ -33,6 +33,36 @@ def cli():
     pass
 
 
+def _load_subscriptions_into_config(config: "AppConfig") -> None:
+    """Load active subscriptions from database and add to config.users.
+
+    Avoids duplicates by checking existing user_ids.
+    """
+    from paper_agent.config import UserConfig
+    from paper_agent.storage.database import PaperDatabase
+
+    db = PaperDatabase(config.storage.db_path)
+    subscriptions = db.load_active_subscriptions()
+
+    existing_user_ids = {u.user_id for u in config.users}
+
+    for sub in subscriptions:
+        email = sub["email"]
+        if email not in existing_user_ids:
+            user_config = UserConfig(
+                user_id=email,
+                display_name=email,
+                subscriptions={"sub_domains": sub["sub_domains"]},
+                notify={"email": {"enabled": True, "recipients": [email]}},
+            )
+            config.users.append(user_config)
+            existing_user_ids.add(email)
+            logging.getLogger(__name__).info(f"Loaded subscription user '{email}' from database")
+
+    if subscriptions:
+        logging.getLogger(__name__).info(f"Loaded {len(subscriptions)} subscription(s) from database")
+
+
 @cli.command()
 @click.option("--config", "-c", default="config.yaml", help="Config file path")
 @click.option("--dry-run", is_flag=True, help="Fetch and score but skip notification")
@@ -50,6 +80,9 @@ def run(config: str, dry_run: bool, days_back: int | None, user: tuple[str, ...]
         sys.exit(1)
 
     setup_logging(cfg.logging.level, cfg.logging.file)
+
+    # Load subscriptions from database
+    _load_subscriptions_into_config(cfg)
 
     if not cfg.users:
         click.echo("Error: No users configured. Edit config.yaml to add users.", err=True)
@@ -77,6 +110,9 @@ def daemon(config: str, user: tuple[str, ...]):
         sys.exit(1)
 
     setup_logging(cfg.logging.level, cfg.logging.file)
+
+    # Load subscriptions from database
+    _load_subscriptions_into_config(cfg)
 
     if not cfg.schedule.enabled:
         click.echo("Error: Scheduler is disabled in config.", err=True)

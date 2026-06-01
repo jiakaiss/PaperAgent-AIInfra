@@ -377,9 +377,7 @@ def test_list_papers_published_after_combined_with_search():
         papers = [
             _make_scored_paper_with_date("2401.00001v1", "Old Attention", datetime(2023, 6, 1)),
             _make_scored_paper_with_date("2401.00002v1", "Recent MoE", datetime(2024, 3, 1)),
-            _make_scored_paper_with_date(
-                "2401.00003v1", "Recent Attention", datetime(2024, 6, 1)
-            ),
+            _make_scored_paper_with_date("2401.00003v1", "Recent Attention", datetime(2024, 6, 1)),
         ]
         db.cache_papers(papers)
 

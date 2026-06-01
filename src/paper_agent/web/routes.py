@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 import math
+import sqlite3
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse
+from pydantic import ValidationError
 
+from paper_agent.config import AppConfig, SubscriptionRequest, UserConfig
 from paper_agent.models import SUB_DOMAINS
 from paper_agent.storage.database import PaperDatabase
 from paper_agent.web.deps import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -55,9 +61,7 @@ def _compute_page_context(
     page_size: int = PAGE_SIZE,
 ) -> dict:
     """Build the template context dict for the paper list + pagination."""
-    total = db.count_papers(
-        sub_domains=sub_domains, search=search, published_after=published_after
-    )
+    total = db.count_papers(sub_domains=sub_domains, search=search, published_after=published_after)
     total_pages = max(1, math.ceil(total / page_size))
     page = max(1, min(page, total_pages))
     offset = (page - 1) * page_size
@@ -153,5 +157,138 @@ def paper_list_fragment(
             "active_sub_domains": active_tags,
             "since": since,
             "has_filters": bool(active_tags or search or published_after),
+        },
+    )
+
+
+@router.get("/subscribe", response_class=HTMLResponse)
+def subscribe_page(request: Request) -> HTMLResponse:
+    """Serve the subscription signup form page."""
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        request=request,
+        name="subscribe.html",
+        context={
+            "all_sub_domains": list(SUB_DOMAINS.keys()),
+        },
+    )
+
+
+@router.post("/api/subscribe", response_class=HTMLResponse)
+def subscribe_api(
+    request: Request,
+    db: PaperDatabase = Depends(get_db),
+    email: str = Form(...),
+    sub_domain: list[str] = Form([]),
+) -> HTMLResponse:
+    """Handle subscription form submission.
+
+    Returns HTML fragment for HTMX to display success/error message.
+    """
+    templates = request.app.state.templates
+
+    # Validate global email config before accepting subscription
+    config: AppConfig | None = getattr(request.app.state, "config", None)
+    if config is None or not config.email.enabled:
+        return templates.TemplateResponse(
+            request=request,
+            name="_subscribe_result.html",
+            context={
+                "success": False,
+                "error": "系统未配置邮件发送功能，请联系管理员",
+            },
+        )
+
+    # Check for missing critical SMTP fields
+    missing = []
+    if not config.email.smtp_host:
+        missing.append("smtp_host")
+    if not config.email.smtp_user:
+        missing.append("smtp_user")
+    if not config.email.smtp_password:
+        missing.append("smtp_password")
+    if missing:
+        return templates.TemplateResponse(
+            request=request,
+            name="_subscribe_result.html",
+            context={
+                "success": False,
+                "error": f"邮件配置不完整（缺少 {', '.join(missing)}），请联系管理员",
+            },
+        )
+
+    # Validate input using Pydantic model
+    try:
+        sub_req = SubscriptionRequest(email=email, sub_domains=sub_domain)
+    except ValidationError as e:
+        # Extract error messages
+        errors = [err["msg"] for err in e.errors()]
+        return templates.TemplateResponse(
+            request=request,
+            name="_subscribe_result.html",
+            context={
+                "success": False,
+                "error": "; ".join(errors),
+            },
+        )
+
+    # Check for duplicate email
+    if db.is_email_subscribed(sub_req.email):
+        existing = db.get_subscription(sub_req.email)
+        return templates.TemplateResponse(
+            request=request,
+            name="_subscribe_result.html",
+            context={
+                "success": False,
+                "already_subscribed": True,
+                "email": sub_req.email,
+                "sub_domains": existing["sub_domains"] if existing else [],
+            },
+        )
+
+    # Add subscription to database
+    try:
+        db.add_subscription(sub_req.email, sub_req.sub_domains)
+    except sqlite3.IntegrityError:
+        # Race condition: another request added the same email
+        return templates.TemplateResponse(
+            request=request,
+            name="_subscribe_result.html",
+            context={
+                "success": False,
+                "already_subscribed": True,
+                "email": sub_req.email,
+                "sub_domains": sub_req.sub_domains,
+            },
+        )
+
+    # Add to runtime config with SMTP credentials from global config
+    email_notify = {
+        "enabled": True,
+        "recipients": [sub_req.email],
+        "smtp_host": config.email.smtp_host,
+        "smtp_port": config.email.smtp_port,
+        "smtp_user": config.email.smtp_user,
+        "smtp_password": config.email.smtp_password,
+        "sender": config.email.sender,
+        "use_tls": config.email.use_tls,
+    }
+    user_config = UserConfig(
+        user_id=sub_req.email,
+        display_name=sub_req.email,
+        subscriptions={"sub_domains": sub_req.sub_domains},
+        notify={"email": email_notify},
+    )
+    config.users.append(user_config)
+    logger.info(f"Added subscription user '{sub_req.email}' to runtime config")
+
+    # Return success response
+    return templates.TemplateResponse(
+        request=request,
+        name="_subscribe_result.html",
+        context={
+            "success": True,
+            "email": sub_req.email,
+            "sub_domains": sub_req.sub_domains,
         },
     )

@@ -1,0 +1,38 @@
+## Requirements
+
+### Requirement: Global email configuration in AppConfig
+The system SHALL support a top-level `email` configuration section in `AppConfig` for centralized SMTP credentials management.
+
+#### Scenario: Email config defined in config.yaml
+- **WHEN** `config.yaml` contains an `email:` section with SMTP settings
+- **THEN** `AppConfig.email` is populated with the provided values
+
+#### Scenario: Email config omitted from config.yaml
+- **WHEN** `config.yaml` does not contain an `email:` section
+- **THEN** `AppConfig.email` uses default values (enabled=false, empty credentials)
+
+#### Scenario: Email config structure
+- **WHEN** global email config is defined
+- **THEN** it SHALL include: smtp_host, smtp_port, smtp_user, smtp_password, sender, use_tls fields
+
+### Requirement: Email config environment variable interpolation
+The system SHALL support `${ENV_VAR}` interpolation for sensitive email configuration fields.
+
+#### Scenario: SMTP password from environment
+- **WHEN** `config.yaml` contains `smtp_password: ${SMTP_PASSWORD}` and `SMTP_PASSWORD` environment variable is set
+- **THEN** the interpolated value is used for SMTP authentication
+
+#### Scenario: Missing environment variable
+- **WHEN** `config.yaml` references a non-existent environment variable
+- **THEN** the field is set to an empty string (non-strict mode)
+
+### Requirement: Email config validation
+The system SHALL validate global email configuration on startup.
+
+#### Scenario: Invalid SMTP port
+- **WHEN** `smtp_port` is set to a value outside the valid range (1-65535)
+- **THEN** configuration validation fails with a clear error message
+
+#### Scenario: Missing required fields for enabled email
+- **WHEN** `enabled=true` but `smtp_host`, `smtp_user`, or `smtp_password` is empty
+- **THEN** a warning is logged indicating incomplete email configuration
