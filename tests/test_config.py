@@ -8,6 +8,7 @@ import yaml
 
 from paper_agent.config import (
     AppConfig,
+    EmailNotifierConfig,
     PromptsConfig,
     ScoringConfig,
     SubscriptionConfig,
@@ -253,3 +254,126 @@ def test_scoring_config_load_from_yaml():
         assert cfg.scoring.prompts.user_message_template is None
     finally:
         os.unlink(config_path)
+
+
+# ─── Global email config tests ───
+
+
+def test_email_config_defaults():
+    """Default email config has enabled=false and empty credentials."""
+    cfg = AppConfig()
+    assert cfg.email.enabled is False
+    assert cfg.email.smtp_host == "smtp.gmail.com"
+    assert cfg.email.smtp_port == 587
+    assert cfg.email.smtp_user == ""
+    assert cfg.email.smtp_password == ""
+    assert cfg.email.sender == ""
+    assert cfg.email.use_tls is True
+
+
+def test_email_config_custom_values():
+    """Email config accepts custom SMTP settings."""
+    cfg = AppConfig(
+        email=EmailNotifierConfig(
+            enabled=True,
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            smtp_user="user@example.com",
+            smtp_password="secret",
+            sender="noreply@example.com",
+            use_tls=False,
+        )
+    )
+    assert cfg.email.enabled is True
+    assert cfg.email.smtp_host == "smtp.example.com"
+    assert cfg.email.smtp_port == 465
+    assert cfg.email.smtp_user == "user@example.com"
+    assert cfg.email.smtp_password == "secret"
+    assert cfg.email.sender == "noreply@example.com"
+    assert cfg.email.use_tls is False
+
+
+def test_email_config_env_interpolation():
+    """Email config supports ${ENV_VAR} interpolation."""
+    os.environ["TEST_SMTP_USER"] = "test@example.com"
+    os.environ["TEST_SMTP_PASSWORD"] = "test_password"
+    data = {
+        "email": {
+            "enabled": True,
+            "smtp_user": "${TEST_SMTP_USER}",
+            "smtp_password": "${TEST_SMTP_PASSWORD}",
+            "sender": "noreply@example.com",
+        },
+        "users": [],
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(data, f)
+        config_path = f.name
+
+    try:
+        cfg = load_config(config_path)
+        assert cfg.email.enabled is True
+        assert cfg.email.smtp_user == "test@example.com"
+        assert cfg.email.smtp_password == "test_password"
+    finally:
+        os.unlink(config_path)
+        del os.environ["TEST_SMTP_USER"]
+        del os.environ["TEST_SMTP_PASSWORD"]
+
+
+def test_email_config_warning_missing_credentials(caplog):
+    """Email config enabled with missing credentials emits warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="paper_agent.config"):
+        AppConfig(
+            email=EmailNotifierConfig(
+                enabled=True,
+                smtp_user="",  # missing
+                smtp_password="secret",
+            )
+        )
+
+    assert any("missing fields" in rec.message for rec in caplog.records)
+    assert any("smtp_user" in rec.message for rec in caplog.records)
+
+
+def test_email_config_no_warning_when_disabled():
+    """Email config disabled does not emit warning even with missing credentials."""
+    import io
+    import logging
+
+    log_stream = io.StringIO()
+    handler = logging.StreamHandler(log_stream)
+    handler.setLevel(logging.WARNING)
+    logger = logging.getLogger("paper_agent.config")
+    logger.addHandler(handler)
+    try:
+        AppConfig(
+            email=EmailNotifierConfig(
+                enabled=False,
+                smtp_user="",
+                smtp_password="",
+            )
+        )
+        assert "missing fields" not in log_stream.getvalue()
+    finally:
+        logger.removeHandler(handler)
+
+
+def test_email_config_no_warning_when_complete(caplog):
+    """Email config enabled with all credentials does not emit warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="paper_agent.config"):
+        AppConfig(
+            email=EmailNotifierConfig(
+                enabled=True,
+                smtp_host="smtp.example.com",
+                smtp_user="user@example.com",
+                smtp_password="secret",
+            )
+        )
+
+    assert not any("missing fields" in rec.message for rec in caplog.records)

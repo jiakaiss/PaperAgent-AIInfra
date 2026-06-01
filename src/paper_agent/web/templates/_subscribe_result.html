@@ -1,0 +1,34 @@
+{% if success %}
+<div class="alert alert-success">
+    <h3>订阅成功！</h3>
+    <p>
+        我们已将 <strong>{{ email }}</strong> 添加到订阅列表。
+    </p>
+    <p>您关注的领域：</p>
+    <ul class="sub-domain-list">
+        {% for domain in sub_domains %}
+        <li>{{ domain }}</li>
+        {% endfor %}
+    </ul>
+    <p>我们将使用配置好的邮箱定期为您推送相关论文。</p>
+</div>
+{% elif already_subscribed %}
+<div class="alert alert-warning">
+    <h3>邮箱已订阅</h3>
+    <p>
+        <strong>{{ email }}</strong> 已经在我们的订阅列表中。
+    </p>
+    <p>当前关注的领域：</p>
+    <ul class="sub-domain-list">
+        {% for domain in sub_domains %}
+        <li>{{ domain }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% else %}
+<div class="alert alert-error">
+    <h3>订阅失败</h3>
+    <p>{{ error }}</p>
+    <p>请检查输入信息后重试。</p>
+</div>
+{% endif %}

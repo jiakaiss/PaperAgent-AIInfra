@@ -255,6 +255,7 @@ class LoggingConfig(BaseModel):
 class AppConfig(BaseModel):
     fetch: FetchConfig = Field(default_factory=FetchConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    email: EmailNotifierConfig = Field(default_factory=EmailNotifierConfig)
     users: list[UserConfig] = Field(default_factory=list)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
@@ -268,6 +269,59 @@ class AppConfig(BaseModel):
             dupes = [uid for uid in ids if ids.count(uid) > 1]
             raise ValueError(f"Duplicate user_id(s): {set(dupes)}")
         return users
+
+    @model_validator(mode="after")
+    def validate_email_config(self) -> "AppConfig":
+        """Validate email configuration on startup."""
+        email = self.email
+        if email.enabled:
+            missing = []
+            if not email.smtp_host:
+                missing.append("smtp_host")
+            if not email.smtp_user:
+                missing.append("smtp_user")
+            if not email.smtp_password:
+                missing.append("smtp_password")
+            if missing:
+                logger.warning(
+                    f"Email config enabled but missing fields: {', '.join(missing)}. "
+                    f"Subscription users may not receive emails."
+                )
+        return self
+
+
+# ─── Web API models ───
+
+
+class SubscriptionRequest(BaseModel):
+    """Request model for subscription form submission."""
+
+    email: str = Field(..., description="User's email address")
+    sub_domains: list[str] = Field(
+        ..., min_length=1, description="List of sub-domain names (at least one required)"
+    )
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_format(cls, email: str) -> str:
+        """Validate email format using a simple regex pattern."""
+        import re
+        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        if not re.match(pattern, email):
+            raise ValueError("Invalid email format")
+        return email.lower()
+
+    @field_validator("sub_domains")
+    @classmethod
+    def validate_sub_domains(cls, sub_domains: list[str]) -> list[str]:
+        """Validate that all sub-domains are valid taxonomy keys."""
+        from paper_agent.models import SUB_DOMAINS
+
+        valid_domains = set(SUB_DOMAINS.keys())
+        invalid = [sd for sd in sub_domains if sd not in valid_domains]
+        if invalid:
+            raise ValueError(f"Invalid sub-domain(s): {invalid}")
+        return sub_domains
 
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:

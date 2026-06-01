@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from string import Formatter
 from typing import TYPE_CHECKING
 
 import anthropic
@@ -11,6 +12,17 @@ from paper_agent.models import SUB_DOMAINS, Paper, ScoredPaper
 
 if TYPE_CHECKING:
     from paper_agent.config import PromptsConfig, ScoringConfig
+
+
+class _SafeFormatter(Formatter):
+    """str.format() that leaves unknown placeholders as-is instead of raising."""
+
+    def get_value(self, key, args, kwargs):
+        try:
+            return super().get_value(key, args, kwargs)
+        except (KeyError, IndexError):
+            return "{" + str(key) + "}"
+
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +155,25 @@ def _build_tool_choice(value: str) -> dict:
     return {"type": "auto"}
 
 
+# Sentinel to distinguish "kwarg not passed" from "kwarg explicitly None".
+_UNSET = object()
+
+
+def _resolve(explicit, config, attr, default=_UNSET):
+    """Resolve a parameter: explicit kwarg > config value > default.
+
+    Returns the first non-None value in the chain. When *default* is
+    ``_UNSET`` and no value is found, returns ``None``.
+    """
+    if explicit is not None:
+        return explicit
+    if config is not None:
+        val = getattr(config, attr, None)
+        if val is not None:
+            return val
+    return None if default is _UNSET else default
+
+
 class ClaudeScorer:
     """Scores papers using Anthropic Claude API with tool_use.
 
@@ -165,31 +196,27 @@ class ClaudeScorer:
         abstract_max_length: int | None = None,
         prompts: PromptsConfig | None = None,
     ):
-        # Pull defaults from config when provided; otherwise fall back to
-        # historical hardcoded values for backward compatibility.
-        if config is not None:
-            api_key = api_key if api_key is not None else config.api_key
-            base_url = base_url if base_url is not None else config.base_url
-            model = model if model is not None else config.model
-            batch_size = batch_size if batch_size is not None else config.batch_size
-            max_tokens = max_tokens if max_tokens is not None else config.max_tokens
-            temperature = temperature if temperature is not None else config.temperature
-            tool_choice = tool_choice if tool_choice is not None else config.tool_choice
-            abstract_max_length = (
-                abstract_max_length
-                if abstract_max_length is not None
-                else config.abstract_max_length
-            )
-            prompts = prompts if prompts is not None else config.prompts
+        # Resolve: explicit kwarg > config > hardcoded default
+        resolved_model = _resolve(model, config, "model", "claude-haiku-4-5")
+        resolved_batch = _resolve(batch_size, config, "batch_size", 10)
+        resolved_max_tokens = _resolve(max_tokens, config, "max_tokens", 4096)
+        resolved_abs_len = _resolve(abstract_max_length, config, "abstract_max_length", 800)
+        resolved_tool = _resolve(tool_choice, config, "tool_choice", "auto")
+        resolved_prompts = _resolve(prompts, config, "prompts")
 
-        self.client = anthropic.Anthropic(api_key=api_key, base_url=base_url)
-        self.model = model if model is not None else "claude-haiku-4-5"
-        self.batch_size = batch_size if batch_size is not None else 10
-        self.max_tokens = max_tokens if max_tokens is not None else 4096
-        self.temperature = temperature  # None → omit from API call
-        self.tool_choice = _build_tool_choice(tool_choice or "auto")
-        self.abstract_max_length = abstract_max_length if abstract_max_length is not None else 800
-        self.prompts = prompts
+        self.client = anthropic.Anthropic(
+            api_key=_resolve(api_key, config, "api_key"),
+            base_url=_resolve(base_url, config, "base_url"),
+        )
+        self.model = resolved_model
+        self.batch_size = resolved_batch
+        self.max_tokens = resolved_max_tokens
+        # temperature: None means "omit from API call" — resolve only when
+        # explicitly passed or present in config
+        self.temperature = _resolve(temperature, config, "temperature")
+        self.tool_choice = _build_tool_choice(resolved_tool)
+        self.abstract_max_length = resolved_abs_len
+        self.prompts = resolved_prompts
 
     def _resolve_system_prompt(self) -> str:
         """Return the system prompt to use, falling back to the default."""
@@ -201,33 +228,11 @@ class ClaudeScorer:
         """Build the user message for a batch, using custom template if set."""
         formatted = self._format_papers(papers)
         if self.prompts and self.prompts.user_message_template:
-            try:
-                return self.prompts.user_message_template.format(
-                    paper_count=len(papers),
-                    papers=formatted,
-                )
-            except KeyError:
-                # Template references unknown placeholders; still return it
-                # (str.format will leave them as-is if not accessed).
-                logger.warning(
-                    "user_message_template contains unknown placeholders; "
-                    "using partial substitution"
-                )
-                # Use a safe formatter that leaves missing keys untouched
-                from string import Formatter
-
-                class _SafeFormatter(Formatter):
-                    def get_value(self, key, args, kwargs):
-                        try:
-                            return super().get_value(key, args, kwargs)
-                        except (KeyError, IndexError):
-                            return "{" + str(key) + "}"
-
-                return _SafeFormatter().format(
-                    self.prompts.user_message_template,
-                    paper_count=len(papers),
-                    papers=formatted,
-                )
+            return _SafeFormatter().format(
+                self.prompts.user_message_template,
+                paper_count=len(papers),
+                papers=formatted,
+            )
         return _DEFAULT_USER_MESSAGE_TEMPLATE.format(
             paper_count=len(papers),
             papers=formatted,

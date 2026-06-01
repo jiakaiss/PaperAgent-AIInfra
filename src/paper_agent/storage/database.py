@@ -72,6 +72,17 @@ class PaperDatabase:
                 ON sent_papers(user_id, sent_at)
             """)
 
+            # User subscriptions
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT UNIQUE NOT NULL,
+                    sub_domains TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active'
+                )
+            """)
+
     def is_cached(self, arxiv_id: str) -> bool:
         """Check if a paper is already in the cache (scored)."""
         with self._connect() as conn:
@@ -134,30 +145,7 @@ class PaperDatabase:
                     WHERE arxiv_id IN ({placeholders})""",
                 arxiv_ids,
             ).fetchall()
-
-        results = []
-        for row in rows:
-            tags = json.loads(row["sub_domain_tags"]) if row["sub_domain_tags"] else []
-            paper = Paper(
-                arxiv_id=row["arxiv_id"],
-                title=row["title"],
-                authors=[a.strip() for a in row["authors"].split(",")],
-                abstract=row["abstract"],
-                published=datetime.fromisoformat(row["published"]),
-                categories=[c.strip() for c in row["categories"].split(",")],
-                pdf_url=row["pdf_url"],
-                abs_url=row["abs_url"],
-            )
-            results.append(
-                ScoredPaper(
-                    paper=paper,
-                    relevance_score=row["relevance_score"],
-                    quality_score=row["quality_score"],
-                    summary_zh=row["summary_zh"],
-                    sub_domain_tags=tuple(tags),
-                )
-            )
-        return results
+        return [self._row_to_scored_paper(row) for row in rows]
 
     def filter_unsent_for_user(self, user_id: str, arxiv_ids: list[str]) -> list[str]:
         """Return IDs not yet sent to this specific user."""
@@ -293,6 +281,85 @@ class PaperDatabase:
                 if tag in counts:
                     counts[tag] += 1
         return counts
+
+    def add_subscription(self, email: str, sub_domains: list[str]) -> None:
+        """Add a new subscription to the database.
+
+        Args:
+            email: User's email address (must be unique)
+            sub_domains: List of sub-domain names the user is interested in
+
+        Raises:
+            sqlite3.IntegrityError: If email already exists
+        """
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO subscriptions (email, sub_domains, created_at, status)
+                VALUES (?, ?, ?, 'active')
+                """,
+                (email, json.dumps(sub_domains), now),
+            )
+
+    def is_email_subscribed(self, email: str) -> bool:
+        """Check if an email address is already subscribed.
+
+        Args:
+            email: Email address to check
+
+        Returns:
+            True if email exists with status='active', False otherwise
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM subscriptions WHERE email = ? AND status = 'active'",
+                (email,),
+            ).fetchone()
+            return row is not None
+
+    def get_subscription(self, email: str) -> dict | None:
+        """Get subscription details by email.
+
+        Args:
+            email: Email address to look up
+
+        Returns:
+            Dict with email, sub_domains, created_at, status if exists; None otherwise
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT email, sub_domains, created_at, status FROM subscriptions WHERE email = ?",
+                (email,),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "email": row["email"],
+                "sub_domains": json.loads(row["sub_domains"]),
+                "created_at": row["created_at"],
+                "status": row["status"],
+            }
+
+    def load_active_subscriptions(self) -> list[dict]:
+        """Load all active subscriptions from the database.
+
+        Returns:
+            List of dicts with email, sub_domains, created_at, status
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT email, sub_domains, created_at, status FROM subscriptions WHERE status = 'active'"
+            ).fetchall()
+            return [
+                {
+                    "email": row["email"],
+                    "sub_domains": json.loads(row["sub_domains"]),
+                    "created_at": row["created_at"],
+                    "status": row["status"],
+                }
+                for row in rows
+            ]
 
     def get_stats(self, user_id: str | None = None) -> dict:
         """Get database statistics, optionally filtered by user."""

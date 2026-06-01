@@ -70,6 +70,21 @@ scoring:
   #
   #     {papers}
 
+# ─── 全局邮件配置（用于订阅用户） ───
+# 通过 Web 表单订阅的用户将使用此 SMTP 配置接收推送邮件
+# 如果未配置此项，订阅用户将无法收到邮件（但仍可在 Web 界面浏览论文）
+#
+# 注意：此配置仅影响通过 Web 表单订阅的用户
+# 在 config.yaml 中手动配置的用户可以使用各自的 SMTP 配置
+email:
+  enabled: false                 # 设为 true 以启用邮件推送功能
+  smtp_host: smtp.gmail.com      # SMTP 服务器地址
+  smtp_port: 587                 # SMTP 端口（587 for TLS, 465 for SSL）
+  smtp_user: ${SMTP_USER}        # SMTP 用户名（通常就是你的邮箱地址）
+  smtp_password: ${SMTP_PASSWORD} # SMTP 密码或应用专用密码
+  sender: ${SMTP_SENDER}         # 发件人邮箱（通常与 smtp_user 相同）
+  use_tls: true                  # 是否使用 TLS 加密
+
 # ─── 用户配置 ───
 # 每个用户可以订阅不同的子领域，使用不同的通知渠道
 #

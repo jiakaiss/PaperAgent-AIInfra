@@ -143,6 +143,22 @@ A FastAPI + Jinja2 + HTMX web UI launched by `paper-agent web`. The server is a 
 
 **Sub-domain chip filter** on the main page and the **preferences panel checkboxes** share the same `subDomains` array in `localStorage`. Toggling either updates the other and re-fetches the paper list.
 
+### Web Subscriptions (`web/app.py`, `web/routes.py`)
+
+Users can subscribe to paper digests via the `/subscribe` web form. Subscriptions are stored in the `subscriptions` table (SQLite) and loaded into `AppConfig.users` at startup.
+
+**Global Email Configuration** (`config.email`):
+- Subscription users inherit SMTP credentials from the global `email` config section in `config.yaml`
+- When creating a subscription, the system copies `smtp_host`, `smtp_port`, `smtp_user`, `smtp_password`, `sender`, and `use_tls` from `config.email` to the user's `notify.email` config
+- If `config.email.enabled=false` or critical SMTP fields are missing, subscription creation is rejected with an error message
+
+**Subscription to UserConfig conversion**:
+- At startup, `_load_subscriptions_into_config()` loads active subscriptions and creates `UserConfig` objects
+- Each subscription user has `notify.email.enabled=true` and `notify.email.recipients=[email]`
+- SMTP credentials are copied from `config.email` at conversion time (not stored in database)
+
+**Important**: Changes to `config.email` in `config.yaml` require app restart to affect existing subscription users. New subscriptions will use the updated config immediately.
+
 ### Notifier Plugins (`notifier/`)
 
 Protocol-based (structural typing). `create_notifiers_for_user(UserNotifyConfig)` builds a notifier list for one user. Each notifier handles platform-specific quirks:
@@ -163,3 +179,24 @@ Optional (per-user webhook/SMTP credentials configured in config.yaml):
 ## Config Migration
 
 The config format changed from single-user to multi-user. Old `config.yaml` files with a top-level `notify:` section must be rewritten using the new `users:` list format. See `config.example.yaml` for the current structure.
+
+## Troubleshooting
+
+### Subscription users not receiving emails
+
+**Symptom**: Users subscribe via `/subscribe` but don't receive paper digest emails.
+
+**Checklist**:
+1. Verify `config.email.enabled=true` in `config.yaml`
+2. Verify all required SMTP fields are set: `smtp_host`, `smtp_user`, `smtp_password`, `sender`
+3. Check logs for warnings: "Email config enabled but missing fields" or "Global email config not configured"
+4. Test SMTP credentials manually: `paper-agent test --notifier email --user <subscription_email>`
+5. Verify the subscription exists: check `subscriptions` table in database or use `paper-agent stats`
+
+**Common causes**:
+- `config.email.enabled=false` or missing SMTP credentials → subscription rejected at creation time
+- SMTP credentials changed after subscription → existing users still use old credentials (restart app to update)
+- Invalid SMTP credentials → check email notifier logs for "Failed to send email" errors
+- Firewall/network issues → test SMTP connectivity from the server
+
+**Solution**: Ensure `config.email` is properly configured with valid SMTP credentials before users subscribe. If credentials change, restart the app to update existing subscription users.
