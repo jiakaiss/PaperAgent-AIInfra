@@ -1,15 +1,4 @@
-## ADDED Requirements
-
-### Requirement: localStorage preference schema
-The client SHALL store preferences in `localStorage` under the key `paper_agent_prefs` as a JSON object with the shape `{ "mode": "custom" | "all", "subDomains": string[] }`. The default value (when the key is absent) SHALL be `{ "mode": "all", "subDomains": [] }`.
-
-#### Scenario: First visit
-- **WHEN** a new visitor opens `/` and `localStorage` has no `paper_agent_prefs` key
-- **THEN** the JS treats mode as `all`, `subDomains` as empty, and renders all papers
-
-#### Scenario: Stored value is corrupt or invalid
-- **WHEN** `paper_agent_prefs` exists but is not valid JSON or has an unexpected shape
-- **THEN** the JS falls back to the default `{ mode: "all", subDomains: [] }` and overwrites the corrupt value
+## MODIFIED Requirements
 
 ### Requirement: Mode toggle persistence
 The preferences UI SHALL include a mode toggle switching between `custom` and `all`. Toggling SHALL immediately write the new value to `localStorage` and re-render the paper list with the new filter applied. Selecting any specific sub-domain through a chip or checkbox SHALL switch mode to `custom` so the selection affects results immediately.
@@ -53,28 +42,6 @@ The preferences UI SHALL render one checkbox per sub-domain (14 total, from `SUB
 - **WHEN** `paper_agent_prefs.mode = "all"` and `subDomains = ["quantization"]`
 - **THEN** the paper-list request URL omits `sub_domain` parameters and shows all papers
 
-### Requirement: Preferences UI
-The app SHALL render a preferences control accessible from the main page (a collapsible panel or modal). The control SHALL display the current mode toggle and the 14 sub-domain checkboxes.
-
-#### Scenario: Open preferences
-- **WHEN** user clicks the "偏好设置" button
-- **THEN** the preferences panel opens showing current mode and checked/unchecked sub-domain boxes matching `localStorage`
-
-#### Scenario: Close without changes
-- **WHEN** user closes the preferences panel without editing
-- **THEN** no `localStorage` writes occur and the paper list is unchanged
-
-### Requirement: URL mode override
-`GET /` SHALL accept an optional `?mode=custom|all` query parameter. When present, the JS SHALL write the value to `localStorage` (replacing the previous mode) before rendering.
-
-#### Scenario: Override to all
-- **WHEN** user visits `/?mode=all` with `localStorage.mode = "custom"`
-- **THEN** `localStorage.mode` is updated to `all` and all papers are shown
-
-#### Scenario: Invalid mode value ignored
-- **WHEN** user visits `/?mode=banana`
-- **THEN** the override is ignored and the `localStorage` mode is used
-
 ### Requirement: Preferences JS module
 A client-side JS module (e.g. `static/preferences.js`) SHALL expose `getPrefs()`, `setMode(mode)`, `setSubDomains(tags)`, and `applyPrefsToUrl()` helpers. All `localStorage` access SHALL go through this module so other scripts don't touch the raw key. The module SHALL expose or internally use a single paper-list URL builder so chip clicks, checkbox changes, search, time range, and pagination preserve each other's filters.
 
@@ -113,23 +80,3 @@ The sub-domain chip filter on the main page SHALL visually reflect the current `
 #### Scenario: All chips for the same tag toggle together
 - **WHEN** the page renders two chip elements with the same `data-tag="kv_cache"` and the user clicks either one
 - **THEN** both chip elements toggle their `chip-active` class in unison
-
-### Requirement: Select all / clear all sub-domain toggle
-
-The preferences panel SHALL render a single toggle button (id `sub-domain-toggle`) above the sub-domain checkbox list. The button text SHALL be "全选" when not all sub-domains are selected, and "取消全选" when all 14 are selected. Clicking the button SHALL toggle between selecting all valid sub-domains and clearing all, updating `paper_agent_prefs.subDomains`, syncing checkbox/chip states, updating the button text, and refreshing the paper list.
-
-#### Scenario: Click toggle when none selected
-- **WHEN** no sub-domains are selected and user clicks the button (labeled "全选")
-- **THEN** all 14 sub-domain checkboxes become checked, `paper_agent_prefs.subDomains` contains all valid tags, all corresponding chips gain the `chip-active` class, the button text becomes "取消全选", and the paper list re-fetches
-
-#### Scenario: Click toggle when all selected
-- **WHEN** all 14 sub-domains are selected and user clicks the button (labeled "取消全选")
-- **THEN** all sub-domain checkboxes become unchecked, `paper_agent_prefs.subDomains` becomes `[]`, all chips lose the `chip-active` class, the button text becomes "全选", and the paper list re-fetches
-
-#### Scenario: Click toggle when partially selected
-- **WHEN** some (but not all) sub-domains are selected and user clicks the button (labeled "全选")
-- **THEN** all 14 sub-domain checkboxes become checked, `paper_agent_prefs.subDomains` contains all valid tags, and the button text becomes "取消全选"
-
-#### Scenario: Toggle state persists across page reload
-- **WHEN** user clicks the toggle to select all sub-domains and reloads the page
-- **THEN** all 14 checkboxes are checked, all chips are active, and the button is labeled "取消全选"
