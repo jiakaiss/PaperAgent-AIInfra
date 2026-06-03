@@ -137,6 +137,7 @@
         const prefs = getPrefs();
         const valid = new Set(getValidSubDomains());
         prefs.subDomains = (Array.isArray(tags) ? tags : []).filter((t) => valid.has(t));
+        prefs.mode = "custom";
         _persist(prefs);
         syncAllUI(prefs);
         refreshPaperList();
@@ -159,6 +160,7 @@
         } else {
             prefs.subDomains.push(tag);
         }
+        prefs.mode = "custom";
         _persist(prefs);
         syncAllUI(prefs);
         refreshPaperList();
@@ -212,6 +214,18 @@
     function refreshPaperList() {
         const container = document.getElementById("paper-list-container");
         if (!container) return;
+
+        const prefs = getPrefs();
+        if (prefs.mode === "custom" && prefs.subDomains.length === 0) {
+            container.innerHTML =
+                '<div class="empty-state">' +
+                "<h3>Select at least one sub-domain in preferences</h3>" +
+                "<p>当前为自定义领域模式，请至少选择一个领域。</p>" +
+                "</div>";
+            _syncUrlBar();
+            return;
+        }
+
         const url = "/_paper_list" + buildQueryString({ search: _currentSearch() });
         // Use htmx.ajax if available, else fall back to fetch
         if (typeof htmx !== "undefined" && htmx.ajax) {

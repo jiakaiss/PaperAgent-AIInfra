@@ -22,7 +22,12 @@ const PREFS_SRC = readFileSync(
 
 /** Build a fake DOM with N chip elements and 14 checkboxes, then eval preferences.js. */
 function makeEnv(opts = {}) {
-    const { initialPrefs = null, validTags = ["quantization", "moe", "compiler"] } = opts;
+    const {
+        initialPrefs = null,
+        validTags = ["quantization", "moe", "compiler"],
+        searchValue = "",
+        activeSince = "",
+    } = opts;
 
     const store = new Map();
     if (initialPrefs) {
@@ -46,7 +51,7 @@ function makeEnv(opts = {}) {
             tag,
             id: attrs.id || null,
             name: attrs.name || null,
-            value: attrs.value || null,
+            value: attrs.value ?? null,
             hidden: false,
             checked: attrs.checked || false,
             innerHTML: attrs.innerHTML || "",
@@ -102,6 +107,20 @@ function makeEnv(opts = {}) {
     ];
 
     const subDomainToggle = makeElement("button", { id: "sub-domain-toggle", textContent: "全选" });
+    const searchInput = makeElement("input", {
+        classes: ["search-input"],
+        value: searchValue,
+    });
+    const timeChips = [
+        makeElement("button", {
+            "data-since": "",
+            classes: ["chip-time", activeSince === "" ? "chip-active" : ""].filter(Boolean),
+        }),
+        makeElement("button", {
+            "data-since": "1m",
+            classes: ["chip-time", activeSince === "1m" ? "chip-active" : ""].filter(Boolean),
+        }),
+    ];
 
     const elementsById = {
         "server-context": serverContextEl,
@@ -118,8 +137,10 @@ function makeEnv(opts = {}) {
         serverContextEl,
         modeAll,
         modeCustom,
+        searchInput,
         ...checkboxes,
         ...chips,
+        ...timeChips,
         ...Object.values(elementsById),
     ];
 
@@ -131,11 +152,15 @@ function makeEnv(opts = {}) {
             if (sel === 'input[name="sub_domain_pref"]:checked')
                 return checkboxes.filter((c) => c.checked);
             if (sel === 'input[name="mode"]') return [modeAll, modeCustom];
-            if (sel === ".search-input") return [];
+            if (sel === ".search-input") return [searchInput];
+            if (sel === ".chip-time") return timeChips;
             return [];
         },
         querySelector: (sel) => {
-            if (sel === ".search-input") return null;
+            if (sel === ".search-input") return searchInput;
+            if (sel === ".chip-time.chip-active") {
+                return timeChips.find((chip) => chip.classList.has("chip-active")) || null;
+            }
             return null;
         },
         addEventListener: () => {},
@@ -147,8 +172,13 @@ function makeEnv(opts = {}) {
         PaperAgentPrefs: null,
     };
 
-    // Mock htmx so refreshPaperList() takes the no-op branch instead of fetch()
-    const htmx = { ajax: () => {} };
+    // Mock htmx so refreshPaperList() records generated URLs instead of fetching.
+    const htmxCalls = [];
+    const htmx = {
+        ajax: (method, url, options) => {
+            htmxCalls.push({ method, url, options });
+        },
+    };
 
     // Expose globals and eval the module
     const fakeGlobal = {
@@ -173,9 +203,20 @@ function makeEnv(opts = {}) {
 
     return {
         PaperAgentPrefs: window.PaperAgentPrefs,
-        elements: { modeAll, modeCustom, checkboxes, chips, serverContextEl, subDomainToggle },
+        elements: {
+            modeAll,
+            modeCustom,
+            checkboxes,
+            chips,
+            serverContextEl,
+            subDomainToggle,
+            searchInput,
+            timeChips,
+            paperListContainer: elementsById["paper-list-container"],
+        },
         localStorage,
         store,
+        htmxCalls,
     };
 }
 
@@ -375,4 +416,49 @@ test("setSince validates input and accepts valid values", () => {
     assert.doesNotThrow(() => env.PaperAgentPrefs.setSince("invalid"));
     assert.doesNotThrow(() => env.PaperAgentPrefs.setSince("2m"));
     assert.doesNotThrow(() => env.PaperAgentPrefs.setSince(null));
+});
+
+test("selecting a chip from all mode switches to custom and filters URL", () => {
+    const env = makeEnv({ initialPrefs: { mode: "all", subDomains: [] } });
+
+    env.PaperAgentPrefs.toggleChip("quantization");
+
+    const stored = JSON.parse(env.store.get("paper_agent_prefs"));
+    assert.equal(stored.mode, "custom");
+    assert.deepEqual(stored.subDomains, ["quantization"]);
+    assert.equal(env.elements.modeCustom.checked, true);
+    assert.equal(env.htmxCalls.at(-1).url, "/_paper_list?sub_domain=quantization");
+});
+
+test("setSubDomains switches to custom and generated URL includes repeated sub_domain params", () => {
+    const env = makeEnv({ initialPrefs: { mode: "all", subDomains: [] } });
+
+    env.PaperAgentPrefs.setSubDomains(["quantization", "moe"]);
+
+    const stored = JSON.parse(env.store.get("paper_agent_prefs"));
+    assert.equal(stored.mode, "custom");
+    const url = env.htmxCalls.at(-1).url;
+    assert.equal(url, "/_paper_list?sub_domain=quantization&sub_domain=moe");
+});
+
+test("custom mode with empty subDomains renders empty state instead of fetching all", () => {
+    const env = makeEnv({ initialPrefs: { mode: "custom", subDomains: ["quantization"] } });
+
+    env.PaperAgentPrefs.setSubDomains([]);
+
+    assert.equal(env.htmxCalls.length, 0);
+    assert.match(env.elements.paperListContainer.innerHTML, /Select at least one sub-domain/);
+});
+
+test("domain changes preserve search and time filters", () => {
+    const env = makeEnv({
+        initialPrefs: { mode: "all", subDomains: [] },
+        searchValue: "llm",
+        activeSince: "1m",
+    });
+
+    env.PaperAgentPrefs.toggleChip("quantization");
+
+    const url = env.htmxCalls.at(-1).url;
+    assert.equal(url, "/_paper_list?sub_domain=quantization&q=llm&since=1m");
 });
