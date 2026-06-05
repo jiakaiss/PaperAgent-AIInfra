@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Define how web subscription records are stored, queried, loaded into runtime users, and managed over time.
-## Requirements
 ### Requirement: Subscriptions table in database
 The system SHALL create a `subscriptions` table in the SQLite database to persist user subscription information, including active/inactive status and unsubscribe metadata when supported by schema migrations.
 
@@ -66,21 +64,6 @@ The system SHALL convert database subscriptions into UserConfig objects for pipe
 - **WHEN** a subscription is loaded at startup and another subscription is added at runtime with the same global email config and delivery defaults
 - **THEN** both resulting UserConfig objects use the same conversion logic and equivalent email notifier fields and thresholds
 
-### Requirement: Runtime subscription addition
-The system SHALL add new subscriptions to both database and in-memory configuration without requiring restart, using global email config for SMTP credentials. Runtime creation SHALL use the same subscription-to-UserConfig helper as startup loading.
-
-#### Scenario: New subscription added at runtime
-- **WHEN** subscription form is submitted while application is running
-- **THEN** system saves to database AND adds corresponding UserConfig to current AppConfig.users list with SMTP credentials from AppConfig.email
-
-#### Scenario: Pipeline uses new subscription immediately
-- **WHEN** new subscription is added and pipeline runs
-- **THEN** pipeline processes papers for the new subscriber without requiring restart
-
-#### Scenario: Global email config missing during runtime addition
-- **WHEN** subscription is added via web form but AppConfig.email is not configured
-- **THEN** system saves subscription to database, creates UserConfig with notify.email.enabled=false, and returns error message "系统未配置邮件发送功能，请联系管理员"
-
 ### Requirement: Subscription query methods
 The system SHALL provide methods to query, check, and update subscription state.
 
@@ -96,16 +79,7 @@ The system SHALL provide methods to query, check, and update subscription state.
 - **WHEN** system calls an unsubscribe/deactivate method for an existing email
 - **THEN** the corresponding subscription row has `status="inactive"`
 
-### Requirement: Global email config validation for subscriptions
-The system SHALL validate that global email configuration exists before allowing subscription creation.
-
-#### Scenario: Subscription rejected when email not configured
-- **WHEN** user submits subscription form and AppConfig.email.enabled=false or SMTP credentials are missing
-- **THEN** system rejects subscription with error message "系统未配置邮件发送功能，请联系管理员" and does not save to database
-
-#### Scenario: Subscription accepted when email configured
-- **WHEN** user submits subscription form and AppConfig.email is properly configured with SMTP credentials
-- **THEN** system accepts subscription and saves to database with SMTP credentials
+## ADDED Requirements
 
 ### Requirement: Inactive duplicate handling
 The system SHALL handle attempts to subscribe an email that has an inactive subscription with clear behavior and without creating duplicate rows.
@@ -113,4 +87,3 @@ The system SHALL handle attempts to subscribe an email that has an inactive subs
 #### Scenario: Inactive email subscribes again
 - **WHEN** a user submits the subscription form with an email that exists with `status="inactive"`
 - **THEN** the system does not create a duplicate row and returns a clear message indicating the email has an inactive subscription or requires reactivation support
-

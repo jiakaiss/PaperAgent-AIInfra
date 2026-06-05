@@ -51,6 +51,7 @@ def test_build_subscription_email_config_copies_global_smtp_fields():
         "smtp_password": "secret",
         "sender": "noreply@example.com",
         "use_tls": False,
+        "unsubscribe_url": "",
     }
 
 

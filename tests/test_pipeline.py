@@ -408,3 +408,43 @@ def test_pipeline_passes_scoring_config_to_scorer(mock_scorer_cls):
 
     Pipeline(config)
     mock_scorer_cls.assert_called_once_with(config=scoring)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_cached_digest_uses_cache_without_fetching(mock_scorer_cls, mock_fetcher_cls):
+    """Initial subscription digest uses cached papers instead of arXiv/LLM."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[
+                UserConfig(
+                    user_id="alice",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(
+                        min_relevance=6.0,
+                        min_quality=5.0,
+                        top_n=10,
+                    ),
+                )
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        pipeline = Pipeline(config)
+        pipeline.db.cache_papers([
+            _make_scored_paper("001", tags=("quantization",)),
+            _make_scored_paper("002", tags=("moe",)),
+        ])
+
+        results = pipeline.run_cached_for_user("alice", dry_run=True)
+
+        assert [sp.paper.arxiv_id for sp in results["alice"]] == ["001"]
+        mock_fetcher_cls.return_value.fetch.assert_not_called()
+        mock_scorer_cls.return_value.score.assert_not_called()
+    finally:
+        os.unlink(db_path)

@@ -8,6 +8,7 @@ import sys
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from paper_agent.config import AppConfig
 from paper_agent.pipeline import Pipeline
@@ -33,11 +34,14 @@ def start_daemon(config: AppConfig, user_ids: list[str] | None = None) -> None:
         except Exception as e:
             logger.error(f"Pipeline failed: {e}", exc_info=True)
 
-    # Add cron job
-    trigger = CronTrigger(
-        hour=config.schedule.cron_hour,
-        minute=config.schedule.cron_minute,
-    )
+    # Add scheduled job
+    if config.schedule.mode == "interval":
+        trigger = IntervalTrigger(minutes=config.schedule.interval_minutes)
+    else:
+        trigger = CronTrigger(
+            hour=config.schedule.cron_hour,
+            minute=config.schedule.cron_minute,
+        )
 
     scheduler.add_job(
         run_pipeline,
@@ -57,9 +61,14 @@ def start_daemon(config: AppConfig, user_ids: list[str] | None = None) -> None:
     signal.signal(signal.SIGTERM, shutdown)
 
     target = f"users: {', '.join(user_ids)}" if user_ids else "all users"
+    if config.schedule.mode == "interval":
+        schedule_desc = f"every {config.schedule.interval_minutes} minute(s)"
+    else:
+        schedule_desc = (
+            f"daily at {config.schedule.cron_hour:02d}:{config.schedule.cron_minute:02d}"
+        )
     logger.info(
-        f"Daemon started. Running daily at "
-        f"{config.schedule.cron_hour:02d}:{config.schedule.cron_minute:02d} "
+        f"Daemon started. Running {schedule_desc} "
         f"({config.schedule.timezone}) for {target}"
     )
     logger.info("Press Ctrl+C to stop.")

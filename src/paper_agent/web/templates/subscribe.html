@@ -5,9 +5,10 @@
 {% block content %}
 <div class="subscribe-page">
     <div class="subscribe-container">
-        <h1>订阅论文推送</h1>
+        <h1>订阅 / 更新论文推送</h1>
         <p class="subscribe-description">
-            填写您的邮箱地址并选择感兴趣的领域，我们将定期为您推送最新的 AI Infra 相关论文。
+            填写邮箱并选择感兴趣的领域，我们将定期为您推送最新的 AI Infra 相关论文。
+            如果邮箱已订阅，将更新该邮箱的订阅领域。
         </p>
 
         <form id="subscribe-form"
@@ -28,6 +29,19 @@
                 <small class="form-hint">我们将使用此邮箱发送论文推送</small>
             </div>
 
+            {% if access_enabled %}
+            <div class="form-group">
+                <label for="access_code">访问码 <span class="required">*</span></label>
+                <input type="password"
+                       id="access_code"
+                       name="access_code"
+                       placeholder="请输入管理员提供的访问码"
+                       class="form-input"
+                       autocomplete="off">
+                <small class="form-hint">订阅需要授权，请联系管理员获取访问码</small>
+            </div>
+            {% endif %}
+
             <div class="form-group">
                 <label>感兴趣的领域 <span class="required">*</span></label>
                 <p class="form-hint">选择您关注的研究方向（至少选择一个）</p>
@@ -44,9 +58,17 @@
                 </div>
             </div>
 
+            <div class="form-group">
+                <label class="checkbox-card">
+                    <input type="checkbox" name="send_now" value="true">
+                    <span class="checkbox-card-label">保存后立即发送一份最新推荐</span>
+                </label>
+                <small class="form-hint">新订阅默认会立即发送一次；更新订阅时可按需勾选。</small>
+            </div>
+
             <div class="form-actions">
                 <button type="submit" id="subscribe-btn" class="btn btn-primary btn-lg">
-                    订阅推送
+                    保存订阅
                 </button>
             </div>
         </form>
@@ -60,6 +82,13 @@
             // Use htmx:beforeRequest to properly prevent HTMX from submitting
             document.getElementById('subscribe-form').addEventListener('htmx:beforeRequest', function(e) {
                 var checked = document.querySelectorAll('input[name="sub_domain"]:checked');
+                var accessCode = document.getElementById('access_code');
+
+                if (accessCode && accessCode.value.trim() === '') {
+                    e.preventDefault();
+                    showAccessCodeError();
+                    return;
+                }
 
                 if (checked.length === 0) {
                     // Prevent HTMX from sending the request
@@ -73,6 +102,12 @@
                 var resultDiv = document.getElementById('subscribe-result');
                 resultDiv.innerHTML = '<div class="alert alert-error"><h3>请选择领域</h3><p>请至少选择一个感兴趣的领域后再提交。</p></div>';
                 // Scroll to error message
+                resultDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+
+            function showAccessCodeError() {
+                var resultDiv = document.getElementById('subscribe-result');
+                resultDiv.innerHTML = '<div class="alert alert-error"><h3>需要访问码</h3><p>请输入管理员提供的访问码后再提交。</p></div>';
                 resultDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
 

@@ -151,6 +151,25 @@ class Pipeline:
 
         return results
 
+    def run_cached_for_user(
+        self,
+        user_id: str,
+        dry_run: bool = False,
+    ) -> dict[str, list[ScoredPaper]]:
+        """Send an immediate digest to one user using already cached papers only."""
+        users = [u for u in self.config.users if u.user_id == user_id]
+        if not users:
+            logger.warning(f"No user found for cached digest: {user_id}")
+            return {}
+
+        total_cached = self.db.count_papers()
+        if total_cached == 0:
+            logger.info(f"No cached papers available for initial digest: {user_id}")
+            return {user_id: []}
+
+        all_scored = self.db.list_papers(limit=total_cached)
+        return {user_id: self._run_for_user(users[0], all_scored, dry_run=dry_run)}
+
     def _run_for_user(
         self,
         user: UserConfig,

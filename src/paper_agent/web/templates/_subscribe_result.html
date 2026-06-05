@@ -1,8 +1,12 @@
 {% if success %}
 <div class="alert alert-success">
-    <h3>订阅成功！</h3>
+    <h3>{% if updated %}订阅已更新！{% else %}订阅成功！{% endif %}</h3>
     <p>
+        {% if updated %}
+        已更新 <strong>{{ email }}</strong> 的订阅偏好。
+        {% else %}
         我们已将 <strong>{{ email }}</strong> 添加到订阅列表。
+        {% endif %}
     </p>
     <p>您关注的领域：</p>
     <ul class="sub-domain-list">
@@ -11,6 +15,9 @@
         {% endfor %}
     </ul>
     <p>我们将使用配置好的邮箱定期为您推送相关论文。</p>
+    {% if sent_now %}
+    <p>系统正在为您发送一份最新推荐，请稍后查收邮箱。</p>
+    {% endif %}
 </div>
 {% elif already_subscribed %}
 <div class="alert alert-warning">

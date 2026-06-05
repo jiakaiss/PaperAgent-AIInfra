@@ -45,7 +45,10 @@ class FeishuNotifier:
                 [
                     {
                         "tag": "text",
-                        "text": f"   📊 相关度: {sp.relevance_score:.1f}/10  质量: {sp.quality_score:.1f}/10",
+                        "text": (
+                            f"   📊 相关度: {sp.relevance_score:.1f}/10  "
+                            f"质量: {sp.quality_score:.1f}/10"
+                        ),
                     }
                 ]
             )
