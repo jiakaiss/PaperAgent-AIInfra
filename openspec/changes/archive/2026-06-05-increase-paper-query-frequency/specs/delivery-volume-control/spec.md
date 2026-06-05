@@ -1,22 +1,4 @@
-# delivery-volume-control Specification
-
-## Purpose
-TBD - created by archiving change improve-subscription-delivery-controls. Update Purpose after archive.
-## Requirements
-### Requirement: Configurable subscription delivery count
-The system SHALL allow operators to configure the default maximum number of papers delivered per digest for subscription-created users. The default value for subscription-created users SHALL be 10 papers when not explicitly configured.
-
-#### Scenario: Default subscription top_n
-- **WHEN** a web subscription is converted into a runtime `UserConfig` without an explicit configured delivery count
-- **THEN** the resulting user's `thresholds.top_n` is 10
-
-#### Scenario: Configured subscription top_n
-- **WHEN** configuration sets a subscription default delivery count to 15
-- **THEN** web subscription users created from database rows use `thresholds.top_n=15`
-
-#### Scenario: Config-file user override preserved
-- **WHEN** a user is explicitly defined in config with `thresholds.top_n=5`
-- **THEN** pipeline delivery for that user remains limited to 5 papers regardless of subscription default delivery count
+## MODIFIED Requirements
 
 ### Requirement: Configurable daemon query frequency
 The system SHALL allow operators to configure paper ingestion frequency independently from user-facing digest delivery. For low paper-volume deployments, the daemon SHALL support a frequent ingest interval that fetches, scores, and caches papers without sending notifications, while daily digest delivery remains scheduled at the configured digest time.
@@ -51,4 +33,3 @@ The pipeline SHALL continue using the shared paper score cache and per-user sent
 #### Scenario: Daily digest sees already-sent paper
 - **WHEN** a paper was already sent to a user in an earlier digest
 - **THEN** later daily digest runs do not send that same paper to the same user again
-

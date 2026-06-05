@@ -27,25 +27,33 @@ def start_daemon(config: AppConfig, user_ids: list[str] | None = None) -> None:
 
     pipeline = Pipeline(config)
 
-    def run_pipeline():
-        logger.info("Scheduled pipeline run started...")
+    def run_ingest():
+        logger.info("Scheduled ingest started...")
         try:
-            pipeline.run(user_ids=user_ids)
+            pipeline.ingest()
         except Exception as e:
-            logger.error(f"Pipeline failed: {e}", exc_info=True)
+            logger.error(f"Ingest failed: {e}", exc_info=True)
 
-    # Add scheduled job
-    if config.schedule.mode == "interval":
-        trigger = IntervalTrigger(minutes=config.schedule.interval_minutes)
-    else:
-        trigger = CronTrigger(
-            hour=config.schedule.cron_hour,
-            minute=config.schedule.cron_minute,
-        )
+    def run_digest():
+        logger.info("Scheduled digest started...")
+        try:
+            pipeline.run_cached_digest(user_ids=user_ids)
+        except Exception as e:
+            logger.error(f"Digest failed: {e}", exc_info=True)
 
     scheduler.add_job(
-        run_pipeline,
-        trigger=trigger,
+        run_ingest,
+        trigger=IntervalTrigger(minutes=config.schedule.ingest_interval_minutes),
+        id="paper_ingest",
+        name="AI Infra Paper Ingest",
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        run_digest,
+        trigger=CronTrigger(
+            hour=config.schedule.digest_hour,
+            minute=config.schedule.digest_minute,
+        ),
         id="paper_digest",
         name="AI Infra Paper Digest",
         misfire_grace_time=3600,
@@ -61,20 +69,15 @@ def start_daemon(config: AppConfig, user_ids: list[str] | None = None) -> None:
     signal.signal(signal.SIGTERM, shutdown)
 
     target = f"users: {', '.join(user_ids)}" if user_ids else "all users"
-    if config.schedule.mode == "interval":
-        schedule_desc = f"every {config.schedule.interval_minutes} minute(s)"
-    else:
-        schedule_desc = (
-            f"daily at {config.schedule.cron_hour:02d}:{config.schedule.cron_minute:02d}"
-        )
     logger.info(
-        f"Daemon started. Running {schedule_desc} "
+        f"Daemon started. Ingest every {config.schedule.ingest_interval_minutes} minute(s); "
+        f"digest daily at {config.schedule.digest_hour:02d}:{config.schedule.digest_minute:02d} "
         f"({config.schedule.timezone}) for {target}"
     )
     logger.info("Press Ctrl+C to stop.")
 
-    # Run once on startup
-    logger.info("Running initial pipeline...")
-    run_pipeline()
+    # Populate the cache on startup; user-facing digest remains on its daily schedule.
+    logger.info("Running initial ingest...")
+    run_ingest()
 
     scheduler.start()

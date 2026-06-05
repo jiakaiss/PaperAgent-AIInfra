@@ -377,3 +377,100 @@ def test_email_config_no_warning_when_complete(caplog):
         )
 
     assert not any("missing fields" in rec.message for rec in caplog.records)
+
+
+def test_schedule_config_interval_values():
+    """ScheduleConfig accepts interval mode for frequent paper queries."""
+    from paper_agent.config import ScheduleConfig
+
+    cfg = ScheduleConfig(mode="interval", interval_minutes=360)
+    assert cfg.mode == "interval"
+    assert cfg.interval_minutes == 360
+    assert cfg.cron_hour == 9
+    assert cfg.cron_minute == 0
+
+
+def test_schedule_config_cron_backward_compatible():
+    """Cron mode remains the default and keeps daily schedule fields."""
+    from paper_agent.config import ScheduleConfig
+
+    cfg = ScheduleConfig()
+    assert cfg.mode == "cron"
+    assert cfg.cron_hour == 9
+    assert cfg.cron_minute == 0
+
+
+def test_schedule_config_interval_loads_from_yaml():
+    """Interval schedule fields round-trip through YAML loading."""
+    data = {
+        "schedule": {
+            "enabled": True,
+            "mode": "interval",
+            "interval_minutes": 360,
+            "cron_hour": 9,
+            "cron_minute": 0,
+        },
+        "users": [],
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(data, f)
+        config_path = f.name
+
+    try:
+        cfg = load_config(config_path)
+        assert cfg.schedule.mode == "interval"
+        assert cfg.schedule.interval_minutes == 360
+        assert cfg.schedule.cron_hour == 9
+        assert cfg.schedule.cron_minute == 0
+    finally:
+        os.unlink(config_path)
+
+
+def test_schedule_config_separate_ingest_digest_values():
+    """ScheduleConfig supports separate ingest interval and daily digest time."""
+    from paper_agent.config import ScheduleConfig
+
+    cfg = ScheduleConfig(
+        ingest_interval_minutes=360,
+        digest_hour=9,
+        digest_minute=0,
+    )
+    assert cfg.ingest_interval_minutes == 360
+    assert cfg.digest_hour == 9
+    assert cfg.digest_minute == 0
+
+
+def test_schedule_config_rejects_invalid_digest_time():
+    """Digest time must be a valid hour/minute pair."""
+    from paper_agent.config import ScheduleConfig
+
+    with pytest.raises(ValueError, match="digest_hour"):
+        ScheduleConfig(digest_hour=24)
+    with pytest.raises(ValueError, match="digest_minute"):
+        ScheduleConfig(digest_minute=60)
+
+
+def test_schedule_config_separate_ingest_digest_loads_from_yaml():
+    """Separate ingest/digest fields round-trip through YAML loading."""
+    data = {
+        "schedule": {
+            "enabled": True,
+            "ingest_interval_minutes": 360,
+            "digest_hour": 9,
+            "digest_minute": 0,
+        },
+        "users": [],
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(data, f)
+        config_path = f.name
+
+    try:
+        cfg = load_config(config_path)
+        assert cfg.schedule.ingest_interval_minutes == 360
+        assert cfg.schedule.digest_hour == 9
+        assert cfg.schedule.digest_minute == 0
+    finally:
+        os.unlink(config_path)

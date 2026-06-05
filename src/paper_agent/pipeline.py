@@ -68,23 +68,77 @@ class Pipeline:
         logger.debug(f"Superset keywords ({len(keywords)}): {sorted(keywords)}")
         return list(keywords)
 
+    def ingest(self, days_back: int | None = None) -> list[ScoredPaper]:
+        """Fetch, score, and cache papers without notifying users."""
+        days = days_back or self.config.fetch.days_back
+
+        logger.info(f"Ingest: Fetching papers from arXiv (last {days} days)...")
+        papers = self.fetcher.fetch(
+            max_results=self.config.fetch.max_results,
+            days_back=days,
+        )
+
+        if not papers:
+            logger.info("Ingest: No papers found.")
+            return []
+
+        logger.info(f"Ingest: Checking cache ({len(papers)} papers)...")
+        paper_ids = [p.arxiv_id for p in papers]
+        uncached_ids = set(self.db.filter_uncached(paper_ids))
+        cached_papers = [p for p in papers if p.arxiv_id not in uncached_ids]
+        new_papers = [p for p in papers if p.arxiv_id in uncached_ids]
+
+        logger.info(f"  → {len(new_papers)} new, {len(cached_papers)} already cached")
+
+        scored_new: list[ScoredPaper] = []
+        if new_papers:
+            logger.info(f"Ingest: Scoring with Claude ({len(new_papers)} papers)...")
+            scored_new = self.scorer.score(new_papers)
+            self.db.cache_papers(scored_new)
+            logger.info(f"  → Cached {len(scored_new)} scored papers")
+        else:
+            logger.info("Ingest: No new papers to score.")
+
+        scored_cached = self.db.load_cached_papers([p.arxiv_id for p in cached_papers])
+        all_scored = scored_new + scored_cached
+        logger.info(
+            f"Ingest complete. {len(scored_new)} new, "
+            f"{len(all_scored)} fetched scored papers."
+        )
+        return all_scored
+
     def run(
         self,
         dry_run: bool = False,
         days_back: int | None = None,
         user_ids: list[str] | None = None,
     ) -> dict[str, list[ScoredPaper]]:
-        """Execute the full pipeline.
+        """Execute the full fetch → score → notify pipeline."""
+        all_scored = self.ingest(days_back=days_back)
+        if not all_scored:
+            return {}
+        return self._run_digest(all_scored, dry_run=dry_run, user_ids=user_ids)
 
-        Args:
-            dry_run: If True, skip notification step
-            days_back: Override fetch.days_back config
-            user_ids: Run for specific users only (None = all users)
+    def run_cached_digest(
+        self,
+        dry_run: bool = False,
+        user_ids: list[str] | None = None,
+    ) -> dict[str, list[ScoredPaper]]:
+        """Send user digests using cached scored papers only."""
+        total_cached = self.db.count_papers()
+        if total_cached == 0:
+            logger.info("No cached papers available for digest.")
+            return {}
+        all_scored = self.db.list_papers(limit=total_cached)
+        return self._run_digest(all_scored, dry_run=dry_run, user_ids=user_ids)
 
-        Returns:
-            Dict of {user_id: list of scored papers that passed filters}
-        """
-        days = days_back or self.config.fetch.days_back
+    def _run_digest(
+        self,
+        all_scored: list[ScoredPaper],
+        dry_run: bool = False,
+        user_ids: list[str] | None = None,
+    ) -> dict[str, list[ScoredPaper]]:
+        """Filter cached/scored papers and notify selected users."""
         users = self.config.users
         if user_ids:
             users = [u for u in users if u.user_id in user_ids]
@@ -93,62 +147,14 @@ class Pipeline:
             logger.warning("No users to process.")
             return {}
 
+        logger.info(f"Digest: Filtering for {len(users)} user(s)...")
         results: dict[str, list[ScoredPaper]] = {}
-
-        # ─── Shared phase: fetch + dedup + score ───
-
-        # Step 1: Fetch
-        logger.info(f"Step 1/5: Fetching papers from arXiv (last {days} days)...")
-        papers = self.fetcher.fetch(
-            max_results=self.config.fetch.max_results,
-            days_back=days,
-        )
-
-        if not papers:
-            logger.info("No papers found. Pipeline complete.")
-            return {}
-
-        # Step 2: Dedup against papers cache
-        logger.info(f"Step 2/5: Checking cache ({len(papers)} papers)...")
-        paper_ids = [p.arxiv_id for p in papers]
-        uncached_ids = set(self.db.filter_uncached(paper_ids))
-
-        # Split into cached and uncached
-        cached_papers = [p for p in papers if p.arxiv_id not in uncached_ids]
-        new_papers = [p for p in papers if p.arxiv_id in uncached_ids]
-
-        logger.info(f"  → {len(new_papers)} new, {len(cached_papers)} already cached")
-
-        # Step 3: Score new papers
-        scored_new: list[ScoredPaper] = []
-        if new_papers:
-            logger.info(f"Step 3/5: Scoring with Claude ({len(new_papers)} papers)...")
-            scored_new = self.scorer.score(new_papers)
-            self.db.cache_papers(scored_new)
-            logger.info(f"  → Cached {len(scored_new)} scored papers")
-        else:
-            logger.info("Step 3/5: No new papers to score, using cache...")
-
-        # Load cached papers for the fetched IDs
-        scored_cached = self.db.load_cached_papers([p.arxiv_id for p in cached_papers])
-        all_scored = scored_new + scored_cached
-
-        if not all_scored:
-            logger.info("No scored papers available. Pipeline complete.")
-            return {}
-
-        # ─── Per-user phase: filter + dedup + notify ───
-
-        logger.info(f"Step 4/5: Filtering for {len(users)} user(s)...")
-
         for user in users:
             user_papers = self._run_for_user(user, all_scored, dry_run=dry_run)
             results[user.user_id] = user_papers
 
-        # Summary
         total_sent = sum(len(v) for v in results.values())
-        logger.info(f"Step 5/5: Complete. {total_sent} papers across {len(users)} user(s).")
-
+        logger.info(f"Digest complete. {total_sent} papers across {len(users)} user(s).")
         return results
 
     def run_cached_for_user(
