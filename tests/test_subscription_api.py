@@ -6,7 +6,14 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from paper_agent.config import AppConfig, EmailNotifierConfig, FetchConfig, ScoringConfig, StorageConfig, UserConfig
+from paper_agent.config import (
+    AppConfig,
+    EmailNotifierConfig,
+    FetchConfig,
+    ScoringConfig,
+    StorageConfig,
+    UserConfig,
+)
 from paper_agent.web.app import create_app
 
 
@@ -84,7 +91,11 @@ def test_subscribe_invalid_email(app_with_db):
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     # Should contain error message
-    assert "error" in response.text.lower() or "invalid" in response.text.lower() or "错误" in response.text
+    assert (
+        "error" in response.text.lower()
+        or "invalid" in response.text.lower()
+        or "错误" in response.text
+    )
 
 
 def test_subscribe_invalid_sub_domain(app_with_db):

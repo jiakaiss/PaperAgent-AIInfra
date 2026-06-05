@@ -102,6 +102,7 @@ def test_subscription_created_at_timestamp(db):
     assert "created_at" in sub
     # Should be a valid ISO format string
     from datetime import datetime
+
     datetime.fromisoformat(sub["created_at"])  # Should not raise
 
 
@@ -111,7 +112,7 @@ def test_subscription_created_at_timestamp(db):
 def test_load_subscriptions_inherits_smtp_credentials(db):
     """Test that _load_subscriptions_into_config copies SMTP credentials from global config."""
     from paper_agent.config import AppConfig, EmailNotifierConfig
-    from paper_agent.web.app import _load_subscriptions_into_config
+    from paper_agent.subscriptions import load_subscriptions_into_config
 
     # Add a subscription to database
     db.add_subscription("subscriber@example.com", ["quantization", "distillation"])
@@ -131,7 +132,7 @@ def test_load_subscriptions_inherits_smtp_credentials(db):
     )
 
     # Load subscriptions into config
-    _load_subscriptions_into_config(config)
+    load_subscriptions_into_config(config)
 
     # Verify the subscription user was added with SMTP credentials
     assert len(config.users) == 1
@@ -152,10 +153,11 @@ def test_load_subscriptions_inherits_smtp_credentials(db):
 
 
 def test_load_subscriptions_email_not_configured(db, caplog):
-    """Test that subscriptions are loaded with email.enabled=false when global config is not enabled."""
+    """Subscriptions load with email disabled when global email is disabled."""
     import logging
+
     from paper_agent.config import AppConfig, EmailNotifierConfig
-    from paper_agent.web.app import _load_subscriptions_into_config
+    from paper_agent.subscriptions import load_subscriptions_into_config
 
     # Add a subscription to database
     db.add_subscription("subscriber@example.com", ["quantization"])
@@ -167,8 +169,8 @@ def test_load_subscriptions_email_not_configured(db, caplog):
     )
 
     # Load subscriptions with log capture
-    with caplog.at_level(logging.WARNING, logger="paper_agent.web.app"):
-        _load_subscriptions_into_config(config)
+    with caplog.at_level(logging.WARNING, logger="paper_agent.subscriptions"):
+        load_subscriptions_into_config(config)
 
     # Verify the subscription user was added with email disabled
     assert len(config.users) == 1
@@ -184,8 +186,9 @@ def test_load_subscriptions_email_not_configured(db, caplog):
 def test_load_subscriptions_missing_smtp_credentials_warning(db, caplog):
     """Test that a warning is logged when global email config is enabled but missing credentials."""
     import logging
+
     from paper_agent.config import AppConfig, EmailNotifierConfig
-    from paper_agent.web.app import _load_subscriptions_into_config
+    from paper_agent.subscriptions import load_subscriptions_into_config
 
     # Add a subscription to database
     db.add_subscription("subscriber@example.com", ["quantization"])
@@ -202,8 +205,8 @@ def test_load_subscriptions_missing_smtp_credentials_warning(db, caplog):
     )
 
     # Load subscriptions with log capture
-    with caplog.at_level(logging.WARNING, logger="paper_agent.web.app"):
-        _load_subscriptions_into_config(config)
+    with caplog.at_level(logging.WARNING, logger="paper_agent.subscriptions"):
+        load_subscriptions_into_config(config)
 
     # Verify warning was logged about missing fields
     assert any("missing fields" in rec.message for rec in caplog.records)
@@ -213,7 +216,7 @@ def test_load_subscriptions_missing_smtp_credentials_warning(db, caplog):
 def test_load_subscriptions_multiple_with_smtp(db):
     """Test loading multiple subscriptions with SMTP credentials."""
     from paper_agent.config import AppConfig, EmailNotifierConfig
-    from paper_agent.web.app import _load_subscriptions_into_config
+    from paper_agent.subscriptions import load_subscriptions_into_config
 
     # Add multiple subscriptions
     db.add_subscription("user1@example.com", ["quantization"])
@@ -231,7 +234,7 @@ def test_load_subscriptions_multiple_with_smtp(db):
     )
 
     # Load subscriptions
-    _load_subscriptions_into_config(config)
+    load_subscriptions_into_config(config)
 
     # Verify both users were added with SMTP credentials
     assert len(config.users) == 2

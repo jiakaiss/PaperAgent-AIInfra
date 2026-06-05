@@ -122,25 +122,31 @@
         _syncTimeChips(_currentSince());
     }
 
-    /** Set mode ("all" or "custom"), persist, and refresh the paper list. */
-    function setMode(mode) {
-        const prefs = getPrefs();
-        if (mode !== "all" && mode !== "custom") return;
-        prefs.mode = mode;
+    function _commitPrefs(prefs) {
         _persist(prefs);
         syncAllUI(prefs);
         refreshPaperList();
     }
 
+    function _validSubDomains(tags) {
+        const valid = new Set(getValidSubDomains());
+        return (Array.isArray(tags) ? tags : []).filter((t) => valid.has(t));
+    }
+
+    /** Set mode ("all" or "custom"), persist, and refresh the paper list. */
+    function setMode(mode) {
+        const prefs = getPrefs();
+        if (mode !== "all" && mode !== "custom") return;
+        prefs.mode = mode;
+        _commitPrefs(prefs);
+    }
+
     /** Replace the sub-domain selection, persist, and refresh. */
     function setSubDomains(tags) {
         const prefs = getPrefs();
-        const valid = new Set(getValidSubDomains());
-        prefs.subDomains = (Array.isArray(tags) ? tags : []).filter((t) => valid.has(t));
+        prefs.subDomains = _validSubDomains(tags);
         prefs.mode = "custom";
-        _persist(prefs);
-        syncAllUI(prefs);
-        refreshPaperList();
+        _commitPrefs(prefs);
     }
 
     /** Toggle all sub-domains: select all if not all selected, deselect all if all selected. */
@@ -154,16 +160,15 @@
     /** Toggle a single sub-domain tag in/out of the selection. */
     function toggleSubDomain(tag) {
         const prefs = getPrefs();
-        const idx = prefs.subDomains.indexOf(tag);
-        if (idx >= 0) {
-            prefs.subDomains.splice(idx, 1);
+        const selected = new Set(prefs.subDomains);
+        if (selected.has(tag)) {
+            selected.delete(tag);
         } else {
-            prefs.subDomains.push(tag);
+            selected.add(tag);
         }
+        prefs.subDomains = _validSubDomains(Array.from(selected));
         prefs.mode = "custom";
-        _persist(prefs);
-        syncAllUI(prefs);
-        refreshPaperList();
+        _commitPrefs(prefs);
     }
 
     /** Toggle a chip on the main page — same as toggleSubDomain. */

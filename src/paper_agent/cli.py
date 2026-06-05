@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from paper_agent import __version__
+from paper_agent.subscriptions import load_subscriptions_into_config
 
 
 def setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
@@ -33,36 +34,6 @@ def cli():
     pass
 
 
-def _load_subscriptions_into_config(config: "AppConfig") -> None:
-    """Load active subscriptions from database and add to config.users.
-
-    Avoids duplicates by checking existing user_ids.
-    """
-    from paper_agent.config import UserConfig
-    from paper_agent.storage.database import PaperDatabase
-
-    db = PaperDatabase(config.storage.db_path)
-    subscriptions = db.load_active_subscriptions()
-
-    existing_user_ids = {u.user_id for u in config.users}
-
-    for sub in subscriptions:
-        email = sub["email"]
-        if email not in existing_user_ids:
-            user_config = UserConfig(
-                user_id=email,
-                display_name=email,
-                subscriptions={"sub_domains": sub["sub_domains"]},
-                notify={"email": {"enabled": True, "recipients": [email]}},
-            )
-            config.users.append(user_config)
-            existing_user_ids.add(email)
-            logging.getLogger(__name__).info(f"Loaded subscription user '{email}' from database")
-
-    if subscriptions:
-        logging.getLogger(__name__).info(f"Loaded {len(subscriptions)} subscription(s) from database")
-
-
 @cli.command()
 @click.option("--config", "-c", default="config.yaml", help="Config file path")
 @click.option("--dry-run", is_flag=True, help="Fetch and score but skip notification")
@@ -82,7 +53,7 @@ def run(config: str, dry_run: bool, days_back: int | None, user: tuple[str, ...]
     setup_logging(cfg.logging.level, cfg.logging.file)
 
     # Load subscriptions from database
-    _load_subscriptions_into_config(cfg)
+    load_subscriptions_into_config(cfg)
 
     if not cfg.users:
         click.echo("Error: No users configured. Edit config.yaml to add users.", err=True)
@@ -112,7 +83,7 @@ def daemon(config: str, user: tuple[str, ...]):
     setup_logging(cfg.logging.level, cfg.logging.file)
 
     # Load subscriptions from database
-    _load_subscriptions_into_config(cfg)
+    load_subscriptions_into_config(cfg)
 
     if not cfg.schedule.enabled:
         click.echo("Error: Scheduler is disabled in config.", err=True)
@@ -253,6 +224,87 @@ def web(config: str, host: str, port: int):
     app = create_app(cfg)
     click.echo(f"🌐 Paper Agent web UI starting on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+@cli.command()
+@click.option("--config", "-c", default="config.yaml", help="Config file path")
+def doctor(config: str):
+    """Check deployment readiness."""
+    from paper_agent.config import load_config
+    from paper_agent.storage.database import PaperDatabase
+    from paper_agent.subscriptions import missing_email_config_fields
+
+    ok = True
+
+    def pass_(message: str) -> None:
+        click.echo(f"✅ {message}")
+
+    def fail(message: str) -> None:
+        nonlocal ok
+        ok = False
+        click.echo(f"❌ {message}", err=True)
+
+    def warn(message: str) -> None:
+        click.echo(f"⚠️  {message}")
+
+    config_path = Path(config)
+    if not config_path.exists():
+        fail(f"Config file not found: {config_path}")
+        sys.exit(1)
+
+    try:
+        cfg = load_config(config_path)
+        pass_(f"Config loads: {config_path}")
+    except Exception as e:
+        fail(f"Config validation failed: {e}")
+        sys.exit(1)
+
+    try:
+        db_path = Path(cfg.storage.db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        PaperDatabase(db_path)
+        pass_(f"SQLite database initializes: {db_path}")
+    except Exception as e:
+        fail(f"Storage check failed: {e}")
+
+    web_dir = Path(__file__).parent / "web"
+    required_assets = [
+        web_dir / "templates" / "base.html",
+        web_dir / "templates" / "index.html",
+        web_dir / "templates" / "subscribe.html",
+        web_dir / "static" / "style.css",
+        web_dir / "static" / "preferences.js",
+        web_dir / "static" / "vendor" / "htmx.min.js",
+    ]
+    missing_assets = [p for p in required_assets if not p.exists()]
+    if missing_assets:
+        fail("Missing web assets: " + ", ".join(str(p) for p in missing_assets))
+    else:
+        pass_("Web templates and static assets exist")
+
+    if cfg.email.enabled:
+        missing = missing_email_config_fields(cfg.email)
+        if missing:
+            fail("Email config incomplete; missing: " + ", ".join(missing))
+        else:
+            pass_("Global email config is ready for subscriptions")
+    else:
+        warn("Global email is disabled; public subscriptions cannot receive emails")
+
+    if cfg.schedule.enabled:
+        pass_(
+            f"Schedule enabled at "
+            f"{cfg.schedule.cron_hour:02d}:{cfg.schedule.cron_minute:02d} "
+            f"{cfg.schedule.timezone}"
+        )
+    else:
+        warn("Schedule disabled; daemon will not send periodic digests")
+
+    if ok:
+        click.echo("\n✅ Doctor checks passed")
+    else:
+        click.echo("\n❌ Doctor checks failed", err=True)
+        sys.exit(1)
 
 
 @cli.command()

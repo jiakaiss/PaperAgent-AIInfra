@@ -1,0 +1,61 @@
+# Paper Agent Docker deployment config
+# Copy to deploy/config/config.yaml and keep secrets in .env.
+
+fetch:
+  categories: [cs.DC, cs.LG, cs.AI, cs.PF, cs.NI, cs.AR]
+  keywords:
+    - distributed training
+    - model parallelism
+    - pipeline parallelism
+    - inference optimization
+    - model serving
+    - GPU scheduling
+    - large language model infrastructure
+    - speculative decoding
+    - KV cache
+    - quantization
+    - model compression
+    - all-reduce
+    - communication optimization
+    - memory optimization
+    - deep learning compiler
+    - operator fusion
+  max_results: 200
+  days_back: 3
+
+scoring:
+  model: claude-haiku-4-5
+  batch_size: 10
+  api_key: ${ANTHROPIC_API_KEY}
+  # base_url: ${ANTHROPIC_BASE_URL}
+  max_tokens: 4096
+  tool_choice: auto
+  abstract_max_length: 800
+  relevance_weight: 0.6
+  quality_weight: 0.4
+
+# Global email config used by /subscribe users.
+email:
+  enabled: true
+  smtp_host: ${SMTP_HOST}
+  smtp_port: 587
+  smtp_user: ${SMTP_USER}
+  smtp_password: ${SMTP_PASSWORD}
+  sender: ${SMTP_SENDER}
+  use_tls: true
+
+# Optional manually configured users. Web subscriptions are loaded from SQLite.
+users: []
+
+schedule:
+  enabled: true
+  cron_hour: 9
+  cron_minute: 0
+  timezone: Asia/Shanghai
+
+storage:
+  db_path: /app/data/paper_agent.db
+
+logging:
+  level: INFO
+  file: /app/logs/paper-agent.log

@@ -1,0 +1,44 @@
+# Git / local metadata
+.git
+.gitignore
+.gitattributes
+.claude
+.opencode
+.pytest_cache
+.ruff_cache
+
+# Python caches / build outputs
+__pycache__
+*.py[cod]
+*.egg-info
+build
+dist
+.venv
+venv
+env
+
+# Secrets and local config
+.env
+.env.*
+config.yaml
+deploy/config/config.yaml
+
+# Runtime state
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+logs
+web_server.log
+deploy/data
+deploy/logs
+deploy/backups
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+*.swp
+*.swo
