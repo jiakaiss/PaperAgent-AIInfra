@@ -374,3 +374,81 @@ def test_time_range_combined_with_search():
         assert "Recent MoE" not in resp.text
     finally:
         os.unlink(path)
+
+
+def test_quality_filter_hides_low_quality_papers():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers([
+            _make_scored_paper("2401.10001v1", "High Quality", quality=8.0),
+            _make_scored_paper("2401.10002v1", "Low Quality", quality=3.0),
+        ])
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list")
+        assert resp.status_code == 200
+        assert "High Quality" in resp.text
+        assert "Low Quality" not in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_quality_filter_disabled_shows_low_quality_papers():
+    from paper_agent.config import WebConfig
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers([
+            _make_scored_paper("2401.10001v1", "High Quality", quality=8.0),
+            _make_scored_paper("2401.10002v1", "Low Quality", quality=3.0),
+        ])
+        cfg = AppConfig(storage=StorageConfig(db_path=path), web=WebConfig(min_quality=0))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list")
+        assert resp.status_code == 200
+        assert "High Quality" in resp.text
+        assert "Low Quality" in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_quality_filter_combines_with_sub_domain_and_search():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers([
+            _make_scored_paper(
+                "2401.10001v1",
+                "LLM Quantization High",
+                ("quantization",),
+                quality=8.0,
+            ),
+            _make_scored_paper(
+                "2401.10002v1",
+                "LLM Quantization Low",
+                ("quantization",),
+                quality=3.0,
+            ),
+            _make_scored_paper("2401.10003v1", "LLM MoE High", ("moe",), quality=8.0),
+        ])
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list?sub_domain=quantization&q=llm")
+        assert resp.status_code == 200
+        assert "LLM Quantization High" in resp.text
+        assert "LLM Quantization Low" not in resp.text
+        assert "LLM MoE High" not in resp.text
+        assert "共 1 篇论文" in resp.text
+    finally:
+        os.unlink(path)

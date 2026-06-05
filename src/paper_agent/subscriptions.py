@@ -9,8 +9,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
+from urllib.parse import urlencode
 
 from paper_agent.config import EmailNotifierConfig, UserConfig
+from paper_agent.unsubscribe import sign_unsubscribe_token
 
 if TYPE_CHECKING:
     from paper_agent.config import AppConfig
@@ -35,10 +37,17 @@ def is_email_configured(email: EmailNotifierConfig) -> bool:
     return email.enabled and not missing_email_config_fields(email)
 
 
-def build_subscription_email_config(email: str, global_email: EmailNotifierConfig) -> dict:
+def build_subscription_email_config(
+    email: str,
+    global_email: EmailNotifierConfig,
+    unsubscribe_url: str = "",
+) -> dict:
     """Build a per-user email notify config for a subscription recipient."""
     if not is_email_configured(global_email):
-        return {"enabled": False, "recipients": [email]}
+        config = {"enabled": False, "recipients": [email]}
+        if unsubscribe_url:
+            config["unsubscribe_url"] = unsubscribe_url
+        return config
     return {
         "enabled": True,
         "recipients": [email],
@@ -48,20 +57,32 @@ def build_subscription_email_config(email: str, global_email: EmailNotifierConfi
         "smtp_password": global_email.smtp_password,
         "sender": global_email.sender,
         "use_tls": global_email.use_tls,
+        "unsubscribe_url": unsubscribe_url,
     }
+
+
+def build_unsubscribe_url(email: str, base_url: str, secret: str) -> str:
+    """Build a signed unsubscribe URL, or return empty string if not configured."""
+    if not base_url or not secret:
+        return ""
+    token = sign_unsubscribe_token(email, secret)
+    return f"{base_url.rstrip('/')}/unsubscribe?{urlencode({'email': email, 'token': token})}"
 
 
 def subscription_to_user_config(
     email: str,
     sub_domains: Sequence[str],
     global_email: EmailNotifierConfig,
+    default_top_n: int = 10,
+    unsubscribe_url: str = "",
 ) -> UserConfig:
     """Convert a subscription record into a runtime UserConfig."""
     return UserConfig(
         user_id=email,
         display_name=email,
         subscriptions={"sub_domains": list(sub_domains)},
-        notify={"email": build_subscription_email_config(email, global_email)},
+        notify={"email": build_subscription_email_config(email, global_email, unsubscribe_url)},
+        thresholds={"top_n": default_top_n},
     )
 
 
@@ -94,7 +115,24 @@ def load_subscriptions_into_config(config: AppConfig) -> int:
                 "Global email config not configured, "
                 f"subscription user '{email}' will not receive emails"
             )
-        config.users.append(subscription_to_user_config(email, sub["sub_domains"], config.email))
+        unsubscribe_url = build_unsubscribe_url(
+            email,
+            config.web.public_base_url,
+            config.subscriptions.unsubscribe.secret,
+        )
+        if not unsubscribe_url:
+            logger.warning(
+                f"Unsubscribe link not configured for subscription user '{email}'"
+            )
+        config.users.append(
+            subscription_to_user_config(
+                email,
+                sub["sub_domains"],
+                config.email,
+                default_top_n=config.subscriptions.default_top_n,
+                unsubscribe_url=unsubscribe_url,
+            )
+        )
         existing_user_ids.add(email)
         logger.info(f"Loaded subscription user '{email}' from database")
 

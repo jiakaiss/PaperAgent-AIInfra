@@ -37,8 +37,11 @@ class ArxivFetcher:
         """
         queries: list[tuple[str, str]] = []
 
-        # Category query: only use specific AI-infra categories (not cs.LG/cs.AI which are too broad)
-        infra_categories = [c for c in self.categories if c in ("cs.DC", "cs.PF", "cs.NI", "cs.AR")]
+        # Category query: only use specific AI-infra categories
+        # (not cs.LG/cs.AI which are too broad).
+        infra_categories = [
+            c for c in self.categories if c in ("cs.DC", "cs.PF", "cs.NI", "cs.AR")
+        ]
         if infra_categories:
             cat_query = " OR ".join(f"cat:{cat}" for cat in infra_categories)
             queries.append(("categories", cat_query))

@@ -9,6 +9,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -167,6 +168,7 @@ class EmailNotifierConfig(BaseModel):
     sender: str = ""
     recipients: list[str] = []
     use_tls: bool = True
+    unsubscribe_url: str = ""
 
 
 class WeComNotifierConfig(BaseModel):
@@ -230,14 +232,84 @@ class UserConfig(BaseModel):
     thresholds: UserThresholdsConfig = Field(default_factory=UserThresholdsConfig)
 
 
-# ─── Schedule, Storage, Logging (global) ───
+# ─── Web subscriptions, Schedule, Storage, Logging (global) ───
+
+
+class SubscriptionAccessConfig(BaseModel):
+    """Access-code gate for public web subscription creation."""
+
+    enabled: bool = False
+    access_codes: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_access_codes(self) -> SubscriptionAccessConfig:
+        if self.enabled and not [code for code in self.access_codes if code.strip()]:
+            raise ValueError("subscription access control enabled but no access_codes configured")
+        return self
+
+    def is_valid_code(self, code: str | None) -> bool:
+        """Return True if access control is disabled or ``code`` is allowed."""
+        if not self.enabled:
+            return True
+        if code is None:
+            return False
+        return code.strip() in {c.strip() for c in self.access_codes if c.strip()}
+
+
+class UnsubscribeConfig(BaseModel):
+    """Configuration for signed unsubscribe links."""
+
+    secret: str = ""
+    token_max_age_hours: int = 24 * 30
+
+    @model_validator(mode="after")
+    def _check_token_max_age(self) -> UnsubscribeConfig:
+        if self.token_max_age_hours <= 0:
+            raise ValueError("unsubscribe token_max_age_hours must be positive")
+        return self
+
+
+class WebConfig(BaseModel):
+    """Configuration for web-facing features."""
+
+    min_quality: float | None = 5.0
+    public_base_url: str = ""
+
+    @model_validator(mode="after")
+    def _check_min_quality(self) -> WebConfig:
+        if self.min_quality is not None and self.min_quality < 0:
+            raise ValueError("web min_quality must be non-negative or null")
+        return self
+
+
+class SubscriptionDefaultsConfig(BaseModel):
+    """Defaults used for users created from web subscription rows."""
+
+    default_top_n: int = 10
+    send_initial_digest_on_signup: bool = True
+    access: SubscriptionAccessConfig = Field(default_factory=SubscriptionAccessConfig)
+    unsubscribe: UnsubscribeConfig = Field(default_factory=UnsubscribeConfig)
+
+    @model_validator(mode="after")
+    def _check_default_top_n(self) -> SubscriptionDefaultsConfig:
+        if self.default_top_n <= 0:
+            raise ValueError("subscriptions default_top_n must be positive")
+        return self
 
 
 class ScheduleConfig(BaseModel):
     enabled: bool = True
+    mode: Literal["cron", "interval"] = "cron"
     cron_hour: int = 9
     cron_minute: int = 0
+    interval_minutes: int = 24 * 60
     timezone: str = "Asia/Shanghai"
+
+    @model_validator(mode="after")
+    def _check_schedule(self) -> ScheduleConfig:
+        if self.mode == "interval" and self.interval_minutes <= 0:
+            raise ValueError("schedule interval_minutes must be positive when mode='interval'")
+        return self
 
 
 class StorageConfig(BaseModel):
@@ -256,6 +328,8 @@ class AppConfig(BaseModel):
     fetch: FetchConfig = Field(default_factory=FetchConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     email: EmailNotifierConfig = Field(default_factory=EmailNotifierConfig)
+    subscriptions: SubscriptionDefaultsConfig = Field(default_factory=SubscriptionDefaultsConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
     users: list[UserConfig] = Field(default_factory=list)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
@@ -271,7 +345,7 @@ class AppConfig(BaseModel):
         return users
 
     @model_validator(mode="after")
-    def validate_email_config(self) -> "AppConfig":
+    def validate_email_config(self) -> AppConfig:
         """Validate email configuration on startup."""
         email = self.email
         if email.enabled:

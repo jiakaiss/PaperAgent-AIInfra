@@ -243,3 +243,44 @@ def test_load_subscriptions_multiple_with_smtp(db):
         assert user.notify.email.smtp_host == "smtp.example.com"
         assert user.notify.email.smtp_user == "system@example.com"
         assert user.notify.email.smtp_password == "secret"
+
+
+def test_unsubscribe_email_marks_inactive(db):
+    """Unsubscribe keeps row but marks it inactive."""
+    db.add_subscription("user@example.com", ["quantization"])
+
+    assert db.unsubscribe_email("user@example.com") is True
+    sub = db.get_subscription("user@example.com")
+    assert sub["status"] == "inactive"
+    assert sub["unsubscribed_at"] is not None
+    assert not db.is_email_subscribed("user@example.com")
+
+
+def test_load_active_subscriptions_skips_inactive(db):
+    """Inactive subscriptions are not loaded for runtime delivery."""
+    db.add_subscription("active@example.com", ["quantization"])
+    db.add_subscription("inactive@example.com", ["moe"])
+    db.unsubscribe_email("inactive@example.com")
+
+    subs = db.load_active_subscriptions()
+    emails = {s["email"] for s in subs}
+    assert emails == {"active@example.com"}
+
+
+def test_update_subscription_changes_sub_domains(db):
+    """Active subscription preferences can be updated."""
+    db.add_subscription("user@example.com", ["quantization"])
+
+    assert db.update_subscription("user@example.com", ["moe", "serving"]) is True
+
+    sub = db.get_subscription("user@example.com")
+    assert sub["sub_domains"] == ["moe", "serving"]
+
+
+def test_update_subscription_inactive_returns_false(db):
+    """Inactive subscriptions are not updated as active preferences."""
+    db.add_subscription("user@example.com", ["quantization"])
+    db.unsubscribe_email("user@example.com")
+
+    assert db.update_subscription("user@example.com", ["moe"]) is False
+    assert db.get_subscription("user@example.com")["sub_domains"] == ["quantization"]

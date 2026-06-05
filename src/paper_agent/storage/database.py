@@ -79,9 +79,18 @@ class PaperDatabase:
                     email TEXT UNIQUE NOT NULL,
                     sub_domains TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'active'
+                    status TEXT NOT NULL DEFAULT 'active',
+                    unsubscribed_at TEXT
                 )
             """)
+            self._ensure_subscription_columns(conn)
+
+    def _ensure_subscription_columns(self, conn: sqlite3.Connection) -> None:
+        """Apply idempotent migrations for subscription metadata columns."""
+        rows = conn.execute("PRAGMA table_info(subscriptions)").fetchall()
+        columns = {row["name"] for row in rows}
+        if "unsubscribed_at" not in columns:
+            conn.execute("ALTER TABLE subscriptions ADD COLUMN unsubscribed_at TEXT")
 
     def is_cached(self, arxiv_id: str) -> bool:
         """Check if a paper is already in the cache (scored)."""
@@ -181,14 +190,19 @@ class PaperDatabase:
         sub_domains: set[str] | None = None,
         search: str | None = None,
         published_after: str | None = None,
-    ) -> tuple[str, list[str]]:
+        min_quality: float | None = None,
+    ) -> tuple[str, list[str | float]]:
         """Build a WHERE clause and parameter list for paper filtering.
 
         Returns ``(clause, params)`` where ``clause`` is either an empty string
         or starts with `` WHERE ...``.
         """
         conditions: list[str] = []
-        params: list[str] = []
+        params: list[str | float] = []
+
+        if min_quality is not None and min_quality > 0:
+            conditions.append("quality_score >= ?")
+            params.append(min_quality)
 
         if published_after:
             conditions.append("published >= ?")
@@ -235,6 +249,7 @@ class PaperDatabase:
         sub_domains: set[str] | None = None,
         search: str | None = None,
         published_after: str | None = None,
+        min_quality: float | None = None,
         limit: int = 25,
         offset: int = 0,
     ) -> list[ScoredPaper]:
@@ -243,7 +258,7 @@ class PaperDatabase:
         Papers are sorted highest-score-first. ``limit`` and ``offset`` control
         pagination.
         """
-        where, params = self._build_filter_clause(sub_domains, search, published_after)
+        where, params = self._build_filter_clause(sub_domains, search, published_after, min_quality)
         order = " ORDER BY (relevance_score * 0.6 + quality_score * 0.4) DESC"
         paging = " LIMIT ? OFFSET ?"
         with self._connect() as conn:
@@ -258,9 +273,10 @@ class PaperDatabase:
         sub_domains: set[str] | None = None,
         search: str | None = None,
         published_after: str | None = None,
+        min_quality: float | None = None,
     ) -> int:
         """Return the number of scored papers matching the given filters."""
-        where, params = self._build_filter_clause(sub_domains, search, published_after)
+        where, params = self._build_filter_clause(sub_domains, search, published_after, min_quality)
         with self._connect() as conn:
             row = conn.execute(f"SELECT COUNT(*) as cnt FROM papers{where}", params).fetchone()
             return row["cnt"]
@@ -302,6 +318,17 @@ class PaperDatabase:
                 (email, json.dumps(sub_domains), now),
             )
 
+    def update_subscription(self, email: str, sub_domains: list[str]) -> bool:
+        """Update sub-domain preferences for an active subscription."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """UPDATE subscriptions
+                   SET sub_domains = ?
+                   WHERE email = ? AND status = 'active'""",
+                (json.dumps(sub_domains), email),
+            )
+            return cur.rowcount > 0
+
     def is_email_subscribed(self, email: str) -> bool:
         """Check if an email address is already subscribed.
 
@@ -329,7 +356,8 @@ class PaperDatabase:
         """
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT email, sub_domains, created_at, status FROM subscriptions WHERE email = ?",
+                """SELECT email, sub_domains, created_at, status, unsubscribed_at
+                   FROM subscriptions WHERE email = ?""",
                 (email,),
             ).fetchone()
             if row is None:
@@ -339,7 +367,30 @@ class PaperDatabase:
                 "sub_domains": json.loads(row["sub_domains"]),
                 "created_at": row["created_at"],
                 "status": row["status"],
+                "unsubscribed_at": row["unsubscribed_at"],
             }
+
+    def unsubscribe_email(self, email: str) -> bool:
+        """Mark a subscription inactive without deleting its row.
+
+        Returns True when a subscription row exists, including rows that were
+        already inactive.
+        """
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM subscriptions WHERE email = ?",
+                (email,),
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute(
+                """UPDATE subscriptions
+                   SET status = 'inactive', unsubscribed_at = COALESCE(unsubscribed_at, ?)
+                   WHERE email = ?""",
+                (now, email),
+            )
+            return True
 
     def load_active_subscriptions(self) -> list[dict]:
         """Load all active subscriptions from the database.
@@ -349,7 +400,8 @@ class PaperDatabase:
         """
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT email, sub_domains, created_at, status FROM subscriptions WHERE status = 'active'"
+                """SELECT email, sub_domains, created_at, status, unsubscribed_at
+                   FROM subscriptions WHERE status = 'active'"""
             ).fetchall()
             return [
                 {
@@ -357,6 +409,7 @@ class PaperDatabase:
                     "sub_domains": json.loads(row["sub_domains"]),
                     "created_at": row["created_at"],
                     "status": row["status"],
+                    "unsubscribed_at": row["unsubscribed_at"],
                 }
                 for row in rows
             ]

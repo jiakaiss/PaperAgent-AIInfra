@@ -38,7 +38,7 @@ def format_markdown(papers: list[ScoredPaper], title: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def format_email_html(papers: list[ScoredPaper]) -> str:
+def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> str:
     """Format papers as HTML email."""
     if not papers:
         return "<p>今日无符合条件的高质量 AI Infra 论文。</p>"
@@ -67,7 +67,8 @@ def format_email_html(papers: list[ScoredPaper]) -> str:
                 <strong>{i}</strong>
             </td>
             <td style="padding:12px 8px; border-bottom:1px solid #eee;">
-                <a href="{sp.paper.abs_url}" style="color:#1a73e8; text-decoration:none; font-weight:bold;">
+                <a href="{sp.paper.abs_url}"
+                   style="color:#1a73e8; text-decoration:none; font-weight:bold;">
                     {sp.paper.title}
                 </a>
                 <div style="color:#666; font-size:13px; margin-top:4px;">
@@ -77,10 +78,12 @@ def format_email_html(papers: list[ScoredPaper]) -> str:
                     {sp.summary_zh}
                 </div>
                 <div style="margin-top:6px;">
-                    <span style="background:#e8f5e9; color:#2e7d32; padding:2px 8px; border-radius:12px; font-size:12px;">
+                    <span style="background:#e8f5e9; color:#2e7d32; padding:2px 8px;
+                                 border-radius:12px; font-size:12px;">
                         相关度 {sp.relevance_score:.1f}
                     </span>
-                    <span style="background:#e3f2fd; color:#1565c0; padding:2px 8px; border-radius:12px; font-size:12px;">
+                    <span style="background:#e3f2fd; color:#1565c0; padding:2px 8px;
+                                 border-radius:12px; font-size:12px;">
                         质量 {sp.quality_score:.1f}
                     </span>
                     {tag_badges}
@@ -88,10 +91,18 @@ def format_email_html(papers: list[ScoredPaper]) -> str:
             </td>
         </tr>""")
 
+    unsubscribe_html = ""
+    if unsubscribe_url:
+        unsubscribe_html = f"""
+    <p style=\"color:#999; font-size:12px; margin-top:10px; text-align:center;\">
+        不想继续收到推送？<a href=\"{unsubscribe_url}\" style=\"color:#999;\">取消订阅</a>
+    </p>"""
+
     return f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+             sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
     <h1 style="color:#1a73e8; border-bottom:2px solid #1a73e8; padding-bottom:10px;">
         🤖 AI Infra 论文日报
     </h1>
@@ -102,6 +113,7 @@ def format_email_html(papers: list[ScoredPaper]) -> str:
     <p style="color:#999; font-size:12px; margin-top:20px; text-align:center;">
         由 Paper Agent 自动生成推送
     </p>
+    {unsubscribe_html}
 </body>
 </html>"""
 

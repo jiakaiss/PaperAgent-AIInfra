@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import sqlite3
+import threading
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Form, Query, Request
@@ -14,7 +15,12 @@ from pydantic import ValidationError
 from paper_agent.config import AppConfig, SubscriptionRequest
 from paper_agent.models import SUB_DOMAINS
 from paper_agent.storage.database import PaperDatabase
-from paper_agent.subscriptions import missing_email_config_fields, subscription_to_user_config
+from paper_agent.subscriptions import (
+    build_unsubscribe_url,
+    missing_email_config_fields,
+    subscription_to_user_config,
+)
+from paper_agent.unsubscribe import verify_unsubscribe_token
 from paper_agent.web.deps import get_db
 
 logger = logging.getLogger(__name__)
@@ -40,6 +46,39 @@ def _validate_sub_domains(tags: list[str]) -> list[str]:
     return [t for t in tags if t in SUB_DOMAINS]
 
 
+def _send_initial_digest(config: AppConfig, user_id: str) -> None:
+    """Run one immediate pipeline pass for a newly subscribed user."""
+    try:
+        from paper_agent.pipeline import Pipeline
+
+        logger.info(f"Running initial cached digest for new subscription user '{user_id}'")
+        Pipeline(config).run_cached_for_user(user_id)
+    except Exception as e:
+        logger.error(f"Initial digest failed for subscription user '{user_id}': {e}", exc_info=True)
+
+
+def _upsert_runtime_user(config: AppConfig, user_config) -> None:
+    """Replace or append a runtime subscription user."""
+    config.users = [u for u in config.users if u.user_id != user_config.user_id]
+    config.users.append(user_config)
+
+
+def _enqueue_initial_digest(request: Request, config: AppConfig, user_id: str) -> None:
+    """Start the initial digest without blocking the subscription response."""
+    if not config.subscriptions.send_initial_digest_on_signup:
+        return
+    if getattr(request.app.state, "run_initial_digest_inline", False):
+        _send_initial_digest(config, user_id)
+        return
+    thread = threading.Thread(
+        target=_send_initial_digest,
+        args=(config, user_id),
+        name=f"initial-digest-{user_id}",
+        daemon=True,
+    )
+    thread.start()
+
+
 def _parse_since(since: str | None) -> str | None:
     """Convert a relative time range code to an absolute date string.
 
@@ -58,11 +97,17 @@ def _compute_page_context(
     sub_domains: set[str] | None,
     search: str | None,
     published_after: str | None,
+    min_quality: float | None,
     page: int,
     page_size: int = PAGE_SIZE,
 ) -> dict:
     """Build the template context dict for the paper list + pagination."""
-    total = db.count_papers(sub_domains=sub_domains, search=search, published_after=published_after)
+    total = db.count_papers(
+        sub_domains=sub_domains,
+        search=search,
+        published_after=published_after,
+        min_quality=min_quality,
+    )
     total_pages = max(1, math.ceil(total / page_size))
     page = max(1, min(page, total_pages))
     offset = (page - 1) * page_size
@@ -70,6 +115,7 @@ def _compute_page_context(
         sub_domains=sub_domains,
         search=search,
         published_after=published_after,
+        min_quality=min_quality,
         limit=page_size,
         offset=offset,
     )
@@ -113,7 +159,9 @@ def index(
 
     search = q.strip() if q else None
     published_after = _parse_since(since)
-    list_ctx = _compute_page_context(db, sub_domain_set, search, published_after, page)
+    config: AppConfig | None = getattr(request.app.state, "config", None)
+    min_quality = config.web.min_quality if config else None
+    list_ctx = _compute_page_context(db, sub_domain_set, search, published_after, min_quality, page)
     sub_domain_counts = db.get_sub_domain_counts()
 
     return templates.TemplateResponse(
@@ -147,7 +195,9 @@ def paper_list_fragment(
     sub_domain_set = set(active_tags) if active_tags else None
     search = q.strip() if q else None
     published_after = _parse_since(since)
-    list_ctx = _compute_page_context(db, sub_domain_set, search, published_after, page)
+    config: AppConfig | None = getattr(request.app.state, "config", None)
+    min_quality = config.web.min_quality if config else None
+    list_ctx = _compute_page_context(db, sub_domain_set, search, published_after, min_quality, page)
 
     return templates.TemplateResponse(
         request=request,
@@ -166,11 +216,14 @@ def paper_list_fragment(
 def subscribe_page(request: Request) -> HTMLResponse:
     """Serve the subscription signup form page."""
     templates = request.app.state.templates
+    config: AppConfig | None = getattr(request.app.state, "config", None)
+    access_enabled = bool(config and config.subscriptions.access.enabled)
     return templates.TemplateResponse(
         request=request,
         name="subscribe.html",
         context={
             "all_sub_domains": list(SUB_DOMAINS.keys()),
+            "access_enabled": access_enabled,
         },
     )
 
@@ -181,6 +234,8 @@ def subscribe_api(
     db: PaperDatabase = Depends(get_db),
     email: str = Form(...),
     sub_domain: list[str] = Form([]),
+    access_code: str | None = Form(None),
+    send_now: bool = Form(False),
 ) -> HTMLResponse:
     """Handle subscription form submission.
 
@@ -211,6 +266,16 @@ def subscribe_api(
             },
         )
 
+    if not config.subscriptions.access.is_valid_code(access_code):
+        return templates.TemplateResponse(
+            request=request,
+            name="_subscribe_result.html",
+            context={
+                "success": False,
+                "error": "订阅需要有效授权码，请联系管理员获取访问权限",
+            },
+        )
+
     # Validate input using Pydantic model
     try:
         sub_req = SubscriptionRequest(email=email, sub_domains=sub_domain)
@@ -226,40 +291,48 @@ def subscribe_api(
             },
         )
 
-    # Check for duplicate email
-    if db.is_email_subscribed(sub_req.email):
-        existing = db.get_subscription(sub_req.email)
+    existing = db.get_subscription(sub_req.email)
+    is_update = existing is not None and existing["status"] == "active"
+    if existing is not None and existing["status"] != "active":
         return templates.TemplateResponse(
             request=request,
             name="_subscribe_result.html",
             context={
                 "success": False,
-                "already_subscribed": True,
-                "email": sub_req.email,
-                "sub_domains": existing["sub_domains"] if existing else [],
+                "error": "该邮箱已取消订阅，暂不支持直接重新激活，请联系管理员",
             },
         )
 
-    # Add subscription to database
-    try:
-        db.add_subscription(sub_req.email, sub_req.sub_domains)
-    except sqlite3.IntegrityError:
-        # Race condition: another request added the same email
-        return templates.TemplateResponse(
-            request=request,
-            name="_subscribe_result.html",
-            context={
-                "success": False,
-                "already_subscribed": True,
-                "email": sub_req.email,
-                "sub_domains": sub_req.sub_domains,
-            },
-        )
+    if is_update:
+        db.update_subscription(sub_req.email, sub_req.sub_domains)
+    else:
+        try:
+            db.add_subscription(sub_req.email, sub_req.sub_domains)
+        except sqlite3.IntegrityError:
+            db.update_subscription(sub_req.email, sub_req.sub_domains)
+            is_update = True
 
-    # Add to runtime config with SMTP credentials from global config
-    user_config = subscription_to_user_config(sub_req.email, sub_req.sub_domains, config.email)
-    config.users.append(user_config)
-    logger.info(f"Added subscription user '{sub_req.email}' to runtime config")
+    # Add/update runtime config with SMTP credentials from global config
+    unsubscribe_url = build_unsubscribe_url(
+        sub_req.email,
+        config.web.public_base_url,
+        config.subscriptions.unsubscribe.secret,
+    )
+    if not unsubscribe_url:
+        logger.warning(f"Unsubscribe link not configured for subscription user '{sub_req.email}'")
+    user_config = subscription_to_user_config(
+        sub_req.email,
+        sub_req.sub_domains,
+        config.email,
+        default_top_n=config.subscriptions.default_top_n,
+        unsubscribe_url=unsubscribe_url,
+    )
+    _upsert_runtime_user(config, user_config)
+    action = "Updated" if is_update else "Added"
+    logger.info(f"{action} subscription user '{sub_req.email}' in runtime config")
+    sent_now = (not is_update and config.subscriptions.send_initial_digest_on_signup) or send_now
+    if sent_now:
+        _enqueue_initial_digest(request, config, sub_req.email)
 
     # Return success response
     return templates.TemplateResponse(
@@ -267,7 +340,69 @@ def subscribe_api(
         name="_subscribe_result.html",
         context={
             "success": True,
+            "updated": is_update,
+            "sent_now": sent_now,
             "email": sub_req.email,
             "sub_domains": sub_req.sub_domains,
         },
+    )
+
+
+def _valid_unsubscribe_request(config: AppConfig | None, email: str, token: str) -> bool:
+    if config is None or not config.subscriptions.unsubscribe.secret:
+        return False
+    return verify_unsubscribe_token(
+        email,
+        token,
+        config.subscriptions.unsubscribe.secret,
+        config.subscriptions.unsubscribe.token_max_age_hours * 3600,
+    )
+
+
+@router.get("/unsubscribe", response_class=HTMLResponse)
+def unsubscribe_page(
+    request: Request,
+    email: str = Query(""),
+    token: str = Query(""),
+) -> HTMLResponse:
+    """Show unsubscribe confirmation for a valid signed link."""
+    templates = request.app.state.templates
+    config: AppConfig | None = getattr(request.app.state, "config", None)
+    if not _valid_unsubscribe_request(config, email, token):
+        return templates.TemplateResponse(
+            request=request,
+            name="unsubscribe.html",
+            context={"error": "取消订阅链接无效或已过期"},
+        )
+    return templates.TemplateResponse(
+        request=request,
+        name="unsubscribe.html",
+        context={"email": email, "token": token},
+    )
+
+
+@router.post("/unsubscribe", response_class=HTMLResponse)
+def unsubscribe_confirm(
+    request: Request,
+    db: PaperDatabase = Depends(get_db),
+    email: str = Form(...),
+    token: str = Form(...),
+) -> HTMLResponse:
+    """Deactivate a subscription after signed confirmation."""
+    templates = request.app.state.templates
+    config: AppConfig | None = getattr(request.app.state, "config", None)
+    if not _valid_unsubscribe_request(config, email, token):
+        return templates.TemplateResponse(
+            request=request,
+            name="unsubscribe.html",
+            context={"error": "取消订阅链接无效或已过期"},
+        )
+
+    db.unsubscribe_email(email)
+    if config is not None:
+        config.users = [u for u in config.users if u.user_id != email]
+    return templates.TemplateResponse(
+        request=request,
+        name="unsubscribe.html",
+        context={"success": True, "email": email},
     )

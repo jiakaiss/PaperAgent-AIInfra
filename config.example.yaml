@@ -85,6 +85,22 @@ email:
   sender: ${SMTP_SENDER}         # 发件人邮箱（通常与 smtp_user 相同）
   use_tls: true                  # 是否使用 TLS 加密
 
+# ─── Web 订阅配置 ───
+subscriptions:
+  default_top_n: 10              # Web 订阅用户每次最多推送论文数
+  send_initial_digest_on_signup: true # 订阅成功后立即为该用户推送一次
+  access:
+    enabled: false               # 设为 true 后，订阅表单需要访问码
+    access_codes: []             # 示例: ["private-code"]；不要提交真实访问码
+  unsubscribe:
+    secret: ${UNSUBSCRIBE_SECRET} # 用于签名取消订阅链接；生产环境请设置稳定随机值
+    token_max_age_hours: 720     # 取消订阅链接有效期（默认 30 天）
+
+# ─── Web 展示配置 ───
+web:
+  min_quality: 5.0               # Web 列表默认隐藏质量分低于该值的论文；设为 0 或 null 可关闭
+  public_base_url: ""            # 外部访问地址，用于生成取消订阅链接，如 https://papers.example.com
+
 # ─── 用户配置 ───
 # 每个用户可以订阅不同的子领域，使用不同的通知渠道
 #
@@ -159,8 +175,10 @@ users:
 # ─── 定时任务配置（全局） ───
 schedule:
   enabled: true
-  cron_hour: 9
-  cron_minute: 0
+  mode: cron                     # cron: 每天固定时间；interval: 按间隔重复运行
+  cron_hour: 9                   # mode=cron 时生效
+  cron_minute: 0                 # mode=cron 时生效
+  interval_minutes: 360          # mode=interval 时生效；频率越高 arXiv/API 压力越大
   timezone: Asia/Shanghai
 
 # ─── 存储配置 ───

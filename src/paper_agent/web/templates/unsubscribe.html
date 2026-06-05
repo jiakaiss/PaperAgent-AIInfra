@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Paper Agent - 取消订阅{% endblock %}
+
+{% block content %}
+<div class="subscribe-page">
+    <div class="subscribe-container">
+        <h1>取消论文推送</h1>
+
+        {% if success %}
+        <div class="alert alert-success">
+            <h3>已取消订阅</h3>
+            <p><strong>{{ email }}</strong> 后续将不再收到论文推送。</p>
+        </div>
+        {% elif error %}
+        <div class="alert alert-error">
+            <h3>无法取消订阅</h3>
+            <p>{{ error }}</p>
+        </div>
+        {% else %}
+        <p>确认取消 <strong>{{ email }}</strong> 的论文推送？</p>
+        <form method="post" action="/unsubscribe" class="subscribe-form">
+            <input type="hidden" name="email" value="{{ email }}">
+            <input type="hidden" name="token" value="{{ token }}">
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-lg">确认取消订阅</button>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

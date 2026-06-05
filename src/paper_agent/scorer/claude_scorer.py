@@ -31,7 +31,10 @@ SUB_DOMAIN_KEYS = list(SUB_DOMAINS.keys())
 
 SCORE_TOOL = {
     "name": "score_papers",
-    "description": "Score each paper for AI Infrastructure relevance and quality, and assign sub-domain tags",
+    "description": (
+        "Score each paper for AI Infrastructure relevance and quality, "
+        "and assign sub-domain tags"
+    ),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -63,7 +66,10 @@ SCORE_TOOL = {
                         },
                         "sub_domain_tags": {
                             "type": "array",
-                            "description": "1-3 sub-domain tags this paper belongs to (choose from the defined sub-domains)",
+                            "description": (
+                                "1-3 sub-domain tags this paper belongs to "
+                                "(choose from the defined sub-domains)"
+                            ),
                             "items": {
                                 "type": "string",
                                 "enum": SUB_DOMAIN_KEYS,
@@ -89,13 +95,17 @@ SCORE_TOOL = {
 # Build sub-domain descriptions for the system prompt
 SUB_DOMAIN_DESCRIPTIONS = """
 **Sub-Domain Taxonomy** (assign 1-3 tags per paper):
-- `quantization`: Post-training quantization (PTQ), quantization-aware training (QAT), mixed-precision, INT4/INT8, GPTQ, AWQ, GGUF
-- `distillation`: Knowledge distillation, teacher-student frameworks, self-distillation, model compression via distillation
-- `pruning`: Network pruning (structured/unstructured), lottery ticket hypothesis, weight/neuron pruning
+- `quantization`: Post-training quantization (PTQ), quantization-aware training (QAT),
+  mixed-precision, INT4/INT8, GPTQ, AWQ, GGUF
+- `distillation`: Knowledge distillation, teacher-student frameworks, self-distillation,
+  model compression via distillation
+- `pruning`: Network pruning (structured/unstructured), lottery ticket hypothesis,
+  weight/neuron pruning
 - `sparsity`: Sparse computation, sparse attention, 2:4 / N:M sparsity, sparse kernels
 - `distributed_training`: Distributed training systems, data parallelism, FSDP, DeepSpeed, ZeRO
 - `parallelism`: Tensor/pipeline/model/sequence parallelism, Megatron, 3D parallelism
-- `serving`: Model serving engines, vLLM, continuous batching, PagedAttention, inference optimization
+- `serving`: Model serving engines, vLLM, continuous batching, PagedAttention,
+  inference optimization
 - `speculative_decoding`: Speculative decoding, draft models, speculative inference/sampling
 - `kv_cache`: KV cache management, prefix caching, attention memory optimization
 - `moe`: Mixture-of-experts systems, sparse MoE, expert routing, load balancing
@@ -105,7 +115,8 @@ SUB_DOMAIN_DESCRIPTIONS = """
 - `scheduling`: GPU scheduling, cluster management, job scheduling, resource allocation
 """
 
-SYSTEM_PROMPT = f"""You are an expert reviewer specializing in AI Infrastructure. Your task is to evaluate academic papers for their relevance to AI Infra and overall quality.
+SYSTEM_PROMPT = f"""You are an expert reviewer specializing in AI Infrastructure. Your task
+is to evaluate academic papers for their relevance to AI Infra and overall quality.
 
 **AI Infrastructure** includes (but is not limited to):
 - Distributed training systems and frameworks

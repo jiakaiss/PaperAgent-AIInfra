@@ -39,6 +39,7 @@ def app_with_db():
                     subscriptions={"sub_domains": ["all"]},
                 )
             ],
+            subscriptions={"send_initial_digest_on_signup": False},
             storage=StorageConfig(db_path=str(db_path)),
         )
         app = create_app(config)
@@ -125,13 +126,13 @@ def test_subscribe_duplicate_email(app_with_db):
     assert response1.status_code == 200
     assert "success" in response1.text.lower() or "成功" in response1.text
 
-    # Second subscription with same email should indicate already subscribed
+    # Second subscription with same email should update preferences
     response2 = client.post(
         "/api/subscribe",
         data={"email": "duplicate@example.com", "sub_domain": ["distillation"]},
     )
     assert response2.status_code == 200
-    assert "already" in response2.text.lower() or "已经" in response2.text
+    assert "订阅已更新" in response2.text
 
 
 def test_subscribe_empty_sub_domains(app_with_db):
@@ -307,3 +308,92 @@ def test_subscribe_accepted_when_email_configured(app_with_db):
     assert user.notify.email.smtp_user == "system@example.com"
     assert user.notify.email.smtp_password == "secret"
     assert user.notify.email.sender == "noreply@example.com"
+
+
+def test_subscribe_triggers_initial_digest_background_task(app_with_db, monkeypatch):
+    """New subscription immediately runs one pipeline pass for that user."""
+    client, config = app_with_db
+    config.subscriptions.send_initial_digest_on_signup = True
+    client.app.state.run_initial_digest_inline = True
+    calls = []
+
+    class FakePipeline:
+        def __init__(self, config):
+            self.config = config
+
+        def run_cached_for_user(self, user_id):
+            calls.append(user_id)
+            return {}
+
+    import paper_agent.pipeline
+
+    monkeypatch.setattr(paper_agent.pipeline, "Pipeline", FakePipeline)
+
+    response = client.post(
+        "/api/subscribe",
+        data={"email": "instant@example.com", "sub_domain": ["quantization"]},
+    )
+
+    assert response.status_code == 200
+    assert "成功" in response.text
+    assert calls == ["instant@example.com"]
+
+
+def test_subscribe_existing_email_updates_preferences(app_with_db):
+    """Submitting an active subscription email updates sub-domain preferences."""
+    client, config = app_with_db
+
+    first = client.post(
+        "/api/subscribe",
+        data={"email": "update@example.com", "sub_domain": ["quantization"]},
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/api/subscribe",
+        data={"email": "update@example.com", "sub_domain": ["moe", "serving"]},
+    )
+
+    assert second.status_code == 200
+    assert "订阅已更新" in second.text
+    user = next(u for u in config.users if u.user_id == "update@example.com")
+    assert user.subscriptions.sub_domains == ["moe", "serving"]
+
+
+def test_update_subscription_can_send_now(app_with_db, monkeypatch):
+    """Updating an existing subscription can request an immediate cached digest."""
+    client, config = app_with_db
+    calls = []
+
+    class FakePipeline:
+        def __init__(self, config):
+            self.config = config
+
+        def run_cached_for_user(self, user_id):
+            calls.append(user_id)
+            return {}
+
+    import paper_agent.pipeline
+
+    monkeypatch.setattr(paper_agent.pipeline, "Pipeline", FakePipeline)
+    client.app.state.run_initial_digest_inline = True
+
+    client.post(
+        "/api/subscribe",
+        data={"email": "refresh@example.com", "sub_domain": ["quantization"]},
+    )
+    calls.clear()
+    config.subscriptions.send_initial_digest_on_signup = True
+
+    response = client.post(
+        "/api/subscribe",
+        data={
+            "email": "refresh@example.com",
+            "sub_domain": ["distillation"],
+            "send_now": "true",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "订阅已更新" in response.text
+    assert calls == ["refresh@example.com"]
