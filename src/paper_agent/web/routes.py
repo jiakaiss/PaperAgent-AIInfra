@@ -11,9 +11,10 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 
-from paper_agent.config import AppConfig, SubscriptionRequest, UserConfig
+from paper_agent.config import AppConfig, SubscriptionRequest
 from paper_agent.models import SUB_DOMAINS
 from paper_agent.storage.database import PaperDatabase
+from paper_agent.subscriptions import missing_email_config_fields, subscription_to_user_config
 from paper_agent.web.deps import get_db
 
 logger = logging.getLogger(__name__)
@@ -199,14 +200,7 @@ def subscribe_api(
             },
         )
 
-    # Check for missing critical SMTP fields
-    missing = []
-    if not config.email.smtp_host:
-        missing.append("smtp_host")
-    if not config.email.smtp_user:
-        missing.append("smtp_user")
-    if not config.email.smtp_password:
-        missing.append("smtp_password")
+    missing = missing_email_config_fields(config.email)
     if missing:
         return templates.TemplateResponse(
             request=request,
@@ -263,22 +257,7 @@ def subscribe_api(
         )
 
     # Add to runtime config with SMTP credentials from global config
-    email_notify = {
-        "enabled": True,
-        "recipients": [sub_req.email],
-        "smtp_host": config.email.smtp_host,
-        "smtp_port": config.email.smtp_port,
-        "smtp_user": config.email.smtp_user,
-        "smtp_password": config.email.smtp_password,
-        "sender": config.email.sender,
-        "use_tls": config.email.use_tls,
-    }
-    user_config = UserConfig(
-        user_id=sub_req.email,
-        display_name=sub_req.email,
-        subscriptions={"sub_domains": sub_req.sub_domains},
-        notify={"email": email_notify},
-    )
+    user_config = subscription_to_user_config(sub_req.email, sub_req.sub_domains, config.email)
     config.users.append(user_config)
     logger.info(f"Added subscription user '{sub_req.email}' to runtime config")
 

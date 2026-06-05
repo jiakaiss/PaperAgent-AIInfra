@@ -17,6 +17,7 @@ env/
 # Environment variables
 .env
 .env.*
+!.env.example
 
 # IDE
 .idea/
@@ -33,12 +34,16 @@ env/
 *.sqlite
 *.sqlite3
 
-# Config with secrets (keep config.example.yaml)
+# Config with secrets (keep config.example.yaml and deploy/config/config.yaml.example)
 config.yaml
+deploy/config/config.yaml
 
-# Logs
+# Logs and deployment runtime data
 *.log
 logs/
+deploy/data/
+deploy/logs/
+deploy/backups/
 
 # OS
 .DS_Store

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: `paper-agent web` CLI command
-The CLI SHALL expose a `web` subcommand that launches the web server. It SHALL accept `--host` (default `127.0.0.1`) and `--port` (default `8000`) options, plus `--config` to locate `config.yaml`.
+The CLI SHALL expose a `web` subcommand that launches the web server. It SHALL accept `--host` (default `127.0.0.1`) and `--port` (default `8000`) options, plus `--config` to locate `config.yaml`. For containerized deployment, the Docker Compose `web` service SHALL run this command with `--host 0.0.0.0` so it is reachable from outside the container.
 
 #### Scenario: Default launch
 - **WHEN** the operator runs `paper-agent web`
@@ -14,6 +14,10 @@ The CLI SHALL expose a `web` subcommand that launches the web server. It SHALL a
 #### Scenario: Config path is forwarded
 - **WHEN** `paper-agent web --config /etc/paper-agent/config.yaml` is run
 - **THEN** the web app reads its storage path and scoring settings from that file
+
+#### Scenario: Container launch
+- **WHEN** the Docker Compose `web` service starts
+- **THEN** it runs `paper-agent web --host 0.0.0.0 --port <configured-port> --config /app/config.yaml`
 
 ### Requirement: FastAPI application
 The web layer SHALL be implemented as a FastAPI application. The app SHALL mount Jinja2 templates from `src/paper_agent/web/templates` and static assets from `src/paper_agent/web/static`.
@@ -41,11 +45,15 @@ The FastAPI app SHALL expose `PaperDatabase` via a dependency function so route 
 - **THEN** the web request returns successfully without `database is locked`
 
 ### Requirement: Health endpoint
-The app SHALL expose `GET /health` returning JSON `{"status": "ok"}` for liveness probes.
+The app SHALL expose `GET /health` returning JSON `{"status": "ok"}` for liveness probes. Docker Compose SHALL use this endpoint as the web container health check.
 
 #### Scenario: Health check
 - **WHEN** `GET /health` is requested
 - **THEN** the response is `200 OK` with body `{"status": "ok"}`
+
+#### Scenario: Container health check
+- **WHEN** Docker runs the configured health check for the web service
+- **THEN** it requests `/health` and marks the container healthy only when the endpoint returns successfully
 
 ### Requirement: Graceful shutdown
 On SIGTERM / SIGINT the server SHALL close the SQLite connection and exit cleanly.
