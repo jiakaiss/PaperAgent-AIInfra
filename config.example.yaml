@@ -175,10 +175,10 @@ users:
 # ─── 定时任务配置（全局） ───
 schedule:
   enabled: true
-  mode: cron                     # cron: 每天固定时间；interval: 按间隔重复运行
-  cron_hour: 9                   # mode=cron 时生效
-  cron_minute: 0                 # mode=cron 时生效
-  interval_minutes: 360          # mode=interval 时生效；频率越高 arXiv/API 压力越大
+  # 后台每 6 小时查询/评分/入库；用户推送仍每天 9 点只从缓存发送一次。
+  ingest_interval_minutes: 360   # 后台查询频率；越高 arXiv/API 压力越大
+  digest_hour: 9                 # 每日用户推送小时
+  digest_minute: 0               # 每日用户推送分钟
   timezone: Asia/Shanghai
 
 # ─── 存储配置 ───

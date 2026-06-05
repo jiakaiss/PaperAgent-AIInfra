@@ -303,12 +303,21 @@ class ScheduleConfig(BaseModel):
     cron_hour: int = 9
     cron_minute: int = 0
     interval_minutes: int = 24 * 60
+    ingest_interval_minutes: int = 360
+    digest_hour: int = 9
+    digest_minute: int = 0
     timezone: str = "Asia/Shanghai"
 
     @model_validator(mode="after")
     def _check_schedule(self) -> ScheduleConfig:
         if self.mode == "interval" and self.interval_minutes <= 0:
             raise ValueError("schedule interval_minutes must be positive when mode='interval'")
+        if self.ingest_interval_minutes <= 0:
+            raise ValueError("schedule ingest_interval_minutes must be positive")
+        if not 0 <= self.digest_hour <= 23:
+            raise ValueError("schedule digest_hour must be between 0 and 23")
+        if not 0 <= self.digest_minute <= 59:
+            raise ValueError("schedule digest_minute must be between 0 and 59")
         return self
 
 
