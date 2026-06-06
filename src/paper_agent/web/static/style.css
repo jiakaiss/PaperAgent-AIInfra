@@ -471,7 +471,7 @@ code {
 }
 
 .subscribe-container {
-    max-width: 600px;
+    max-width: 820px;
     margin: 0 auto;
     background: var(--color-surface);
     border: 1px solid var(--color-border);
@@ -526,7 +526,7 @@ code {
 
 .sub-domain-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: var(--spacing-sm);
     margin-top: var(--spacing-md);
 }
@@ -540,6 +540,7 @@ code {
     border-radius: var(--radius);
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
+    flex-wrap: nowrap;
 }
 
 .checkbox-card:hover {
@@ -562,6 +563,7 @@ code {
     font-size: var(--font-size-sm);
     cursor: pointer;
     user-select: none;
+    white-space: nowrap;
 }
 
 /* ── Alerts ── */
@@ -667,14 +669,5 @@ code {
     }
 }
 
-@media (min-width: 768px) and (max-width: 1023px) {
-    .sub-domain-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-}
-
-@media (min-width: 1024px) {
-    .sub-domain-grid {
-        grid-template-columns: repeat(3, 1fr);
-    }
-}
+/* sub-domain grid now uses repeat(auto-fit, minmax(220px, 1fr)) for all ≥768px */
+/* Hard-coded column counts removed — auto-fit handles responsive column count */

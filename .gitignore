@@ -39,7 +39,7 @@ config.yaml
 deploy/config/config.yaml
 
 # Logs and deployment runtime data
-*.log
+*.log*
 logs/
 deploy/data/
 deploy/logs/
