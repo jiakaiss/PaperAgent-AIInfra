@@ -14,7 +14,7 @@
 - **全局邮件配置** — 订阅用户统一继承 `config.email` SMTP 配置，支持 `${ENV_VAR}` 注入敏感信息
 - **部署前自检** — `paper-agent doctor` 检查配置、数据库、Web 资源和邮件配置
 - **Docker / VPS 部署** — 提供 Dockerfile、docker-compose、`.env.example`、部署/备份/恢复脚本
-- 可配置的定时任务（daemon 模式），每天自动抓取
+- 可配置的 daemon 定时任务：后台按间隔查询/评分/入库，每日定时从缓存推送
 - SQLite 去重，避免重复推送
 
 ## 快速开始
@@ -47,7 +47,7 @@ paper-agent init
 - `email`：全局 SMTP 配置，供 Web 自助订阅用户接收邮件推送
 - `users`：手动配置的用户，可继续使用飞书/企业微信/钉钉/邮件等通知渠道
 - `storage.db_path`：SQLite 数据库路径，Docker 部署时建议使用 `/app/data/paper_agent.db`
-- `schedule`：daemon 定时推送配置
+- `schedule`：daemon 后台查询频率和每日推送时间配置
 
 ### 运行
 
@@ -64,14 +64,54 @@ paper-agent run --user alice --dry-run -c config.yaml
 # 测试通知配置
 paper-agent test --notifier feishu --user alice -c config.yaml
 
-# 启动定时任务（每天 9:00 自动抓取）
+# 启动 daemon（后台按间隔查询入库，每天 9:00 从缓存推送）
 paper-agent daemon -c config.yaml
 
 # 启动 Web UI（http://127.0.0.1:8000）
 paper-agent web -c config.yaml
 ```
 
-> Windows 用户运行 CLI 前请设置 `set PYTHONIOENCODING=utf-8` 避免编码错误。
+Linux 本地/服务器可使用启动脚本：
+
+```bash
+# 同时启动 Web 和 daemon（前台运行，Ctrl+C 同时停止）
+scripts/start-local.sh all
+
+# 只启动 Web
+scripts/start-local.sh web
+
+# 只启动 daemon（后台查询 + 每日推送）
+scripts/start-local.sh daemon
+
+# 指定 Python 环境
+PYTHON_BIN=/opt/conda/envs/paper_agent/bin/python scripts/start-local.sh all
+
+# 本地检查（ruff + pytest + 可选 JS tests）
+scripts/check.sh
+```
+
+常用 Linux/Docker 运维脚本：
+
+```bash
+# 部署/更新 Docker 服务
+scripts/deploy.sh
+
+# 查看服务状态和 Web 健康检查
+scripts/status.sh
+
+# 查看全部日志，或指定 web/daemon
+scripts/logs.sh
+scripts/logs.sh daemon
+
+# 停止 Docker 服务
+scripts/stop.sh
+
+# 备份/恢复数据库
+scripts/backup.sh
+scripts/restore.sh deploy/backups/paper_agent-YYYYMMDD-HHMMSS.db
+```
+
+> Windows 不是当前优先部署环境；如需手动运行 CLI，请自行设置 `PYTHONIOENCODING=utf-8` 避免编码错误。
 
 ## 命令说明
 
@@ -128,7 +168,7 @@ cp deploy/config/config.yaml.example deploy/config/config.yaml
 部署后包含两个服务：
 
 - `web`：对外提供 Web UI，容器内绑定 `0.0.0.0:8000`，并提供 `/health` 健康检查
-- `daemon`：按 `schedule` 配置定时抓取、评分和推送
+- `daemon`：按 `schedule` 配置执行后台查询/评分/入库，并每日定时从缓存推送
 
 运行数据默认持久化在：
 
