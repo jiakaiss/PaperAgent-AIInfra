@@ -186,24 +186,41 @@ class Pipeline:
         uid = user.user_id
         display = user.display_name or uid
 
-        # Filter by sub-domain tags
         sub_domains = user.subscriptions.sub_domains
-        if "all" not in sub_domains:
-            wanted = set(sub_domains)
-            filtered = [sp for sp in all_scored if set(sp.sub_domain_tags) & wanted]
+        min_rel = user.thresholds.min_relevance
+        min_qual = user.thresholds.min_quality
+        weights = self.score_weights
+
+        if "all" in sub_domains:
+            # "all" subscribers: filter by thresholds and take user-level top_n.
+            # Per-domain limit doesn't apply because there's no sub-domain to bucket by.
+            filtered = [
+                sp for sp in all_scored
+                if sp.relevance_score >= min_rel and sp.quality_score >= min_qual
+            ]
+            filtered = sort_by_score(filtered, weights=weights)[: user.thresholds.top_n]
         else:
-            filtered = list(all_scored)
-
-        # Filter by thresholds
-        filtered = [
-            sp
-            for sp in filtered
-            if sp.relevance_score >= user.thresholds.min_relevance
-            and sp.quality_score >= user.thresholds.min_quality
-        ]
-
-        # Sort and limit
-        filtered = sort_by_score(filtered, weights=self.score_weights)[: user.thresholds.top_n]
+            # Per-sub-domain top-N then merge + dedup, then apply user-level top_n as cap.
+            per_domain_top = user.thresholds.per_sub_domain_top_n
+            bucket_sizes: list[str] = []
+            seen: set[str] = set()
+            merged: list = []
+            for sd in sub_domains:
+                bucket = [
+                    sp for sp in all_scored
+                    if sd in sp.sub_domain_tags
+                    and sp.relevance_score >= min_rel
+                    and sp.quality_score >= min_qual
+                ]
+                bucket = sort_by_score(bucket, weights=weights)[:per_domain_top]
+                bucket_sizes.append(f"{sd}={len(bucket)}")
+                for sp in bucket:
+                    if sp.paper.arxiv_id not in seen:
+                        seen.add(sp.paper.arxiv_id)
+                        merged.append(sp)
+            # Re-sort the deduped union and apply the overall cap.
+            filtered = sort_by_score(merged, weights=weights)[: user.thresholds.top_n]
+            logger.info(f"  [{display}] per-domain buckets: {', '.join(bucket_sizes)}")
 
         # Dedup per user
         ids = [sp.paper.arxiv_id for sp in filtered]
