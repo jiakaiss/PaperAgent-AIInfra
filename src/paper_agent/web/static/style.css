@@ -492,6 +492,38 @@ code {
     line-height: 1.6;
 }
 
+.subscribe-rules {
+    margin-bottom: var(--spacing-xl);
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: var(--color-bg);
+    border-left: 3px solid var(--color-primary);
+    border-radius: var(--radius-sm);
+}
+
+.subscribe-rules-title {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-bold);
+    margin: 0 0 var(--spacing-sm) 0;
+    color: var(--color-text);
+}
+
+.subscribe-rules-list {
+    margin: 0;
+    padding-left: 1.25rem;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+    line-height: 1.6;
+}
+
+.subscribe-rules-list li + li {
+    margin-top: var(--spacing-xs);
+}
+
+.subscribe-rules-list strong {
+    color: var(--color-text);
+    font-weight: var(--font-weight-bold);
+}
+
 .sub-domain-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -624,6 +656,10 @@ code {
 
     .subscribe-container {
         padding: var(--spacing-lg);
+    }
+
+    .subscribe-rules {
+        padding: var(--spacing-sm) var(--spacing-md);
     }
 
     .sub-domain-grid {
