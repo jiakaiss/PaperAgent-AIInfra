@@ -219,7 +219,16 @@ class UserThresholdsConfig(BaseModel):
 
     min_relevance: float = 6.0
     min_quality: float = 5.0
-    top_n: int = 20
+    top_n: int = 200
+    per_sub_domain_top_n: int = 20
+
+    @model_validator(mode="after")
+    def _check_positive_limits(self) -> UserThresholdsConfig:
+        if self.top_n <= 0:
+            raise ValueError("thresholds top_n must be positive")
+        if self.per_sub_domain_top_n <= 0:
+            raise ValueError("thresholds per_sub_domain_top_n must be positive")
+        return self
 
 
 class UserConfig(BaseModel):

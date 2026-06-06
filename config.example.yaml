@@ -136,6 +136,7 @@ users:
       min_relevance: 6.0
       min_quality: 5.0
       top_n: 10
+      # per_sub_domain_top_n: 20   # 每个订阅领域独立取 top N 后合集去重；订阅 ["all"] 时不生效
 
   # ─── 示例用户 2: Bob，关注蒸馏和 MoE ───
   - user_id: bob

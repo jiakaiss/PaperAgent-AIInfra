@@ -56,6 +56,23 @@ def test_format_email_html():
     assert "distributed_training" in html
 
 
+def test_email_html_uses_times_and_yahei():
+    """Email body should declare Times New Roman (English) + Microsoft YaHei (Chinese)."""
+    html = format_email_html([_make_scored_paper(1)])
+    assert "'Times New Roman'" in html
+    assert "'Microsoft YaHei'" in html
+    # Old sans-serif stack should be gone
+    assert "BlinkMacSystemFont" not in html
+    assert "-apple-system" not in html
+
+
+def test_format_markdown_has_no_html_font_family():
+    """Markdown notifier output must not leak the email font-family declaration."""
+    md = format_markdown([_make_scored_paper(1)])
+    assert "font-family" not in md
+    assert "Times New Roman" not in md
+
+
 def test_split_markdown_chunks_short():
     text = "Short text"
     chunks = split_markdown_chunks(text, max_bytes=3800)

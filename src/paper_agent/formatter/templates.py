@@ -101,8 +101,8 @@ def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> s
     return f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-             sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
+<body style="font-family: 'Times New Roman', 'Microsoft YaHei', '微软雅黑', serif;
+             max-width: 800px; margin: 0 auto; padding: 20px;">
     <h1 style="color:#1a73e8; border-bottom:2px solid #1a73e8; padding-bottom:10px;">
         🤖 AI Infra 论文日报
     </h1>

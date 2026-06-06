@@ -521,3 +521,133 @@ def test_pipeline_cached_digest_uses_cache_for_all_users(mock_scorer_cls, mock_f
         mock_scorer_cls.return_value.score.assert_not_called()
     finally:
         os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_per_sub_domain_top_n_split_and_dedup(mock_scorer_cls, mock_fetcher_cls):
+    """Per-domain top-N: 30 quant + 25 distil + 5 dual-tag, per_sub_domain_top_n=10 → ≤20 unique."""
+    mock_fetcher_cls.return_value.fetch.return_value = []
+
+    scored = []
+    # 30 quant-only papers, scores 9.0 → 6.1 (descending)
+    for i in range(30):
+        scored.append(_make_scored_paper(
+            f"q{i:03d}", relevance=9.0 - i * 0.1, quality=7.0, tags=("quantization",)
+        ))
+    # 25 distil-only papers
+    for i in range(25):
+        scored.append(_make_scored_paper(
+            f"d{i:03d}", relevance=9.0 - i * 0.1, quality=7.0, tags=("distillation",)
+        ))
+    # 5 dual-tag papers (both quant and distil)
+    for i in range(5):
+        scored.append(_make_scored_paper(
+            f"dual{i}", relevance=8.5, quality=7.5, tags=("quantization", "distillation"),
+        ))
+    mock_scorer_cls.return_value.score.return_value = scored
+    mock_fetcher_cls.return_value.fetch.return_value = [sp.paper for sp in scored]
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=100, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[UserConfig(
+                user_id="alice",
+                subscriptions=SubscriptionConfig(sub_domains=["quantization", "distillation"]),
+                thresholds=UserThresholdsConfig(
+                    min_relevance=6.0, min_quality=5.0,
+                    top_n=200, per_sub_domain_top_n=10,
+                ),
+            )],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        results = Pipeline(config).run(dry_run=True)
+        alice_ids = [sp.paper.arxiv_id for sp in results["alice"]]
+        # Each bucket takes top 10 (10 quant + 10 distil = 20 entries before dedup).
+        # Dual-tag papers (score 8.5) rank inside top 10 of both buckets → counted twice
+        # in raw merge but deduped to one. Final count ≤ 20.
+        assert len(alice_ids) <= 20
+        # No duplicates after dedup
+        assert len(alice_ids) == len(set(alice_ids))
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_per_sub_domain_respects_overall_cap(mock_scorer_cls, mock_fetcher_cls):
+    """top_n caps the dedup'd union even when per-domain buckets sum higher."""
+    sub_domains = ["quantization", "distillation", "pruning", "sparsity", "serving",
+                   "kv_cache", "moe", "compiler", "scheduling", "parallelism"]
+    scored = []
+    for tag in sub_domains:
+        for i in range(5):
+            scored.append(_make_scored_paper(
+                f"{tag}{i}", relevance=8.0, quality=7.0, tags=(tag,)
+            ))
+    mock_scorer_cls.return_value.score.return_value = scored
+    mock_fetcher_cls.return_value.fetch.return_value = [sp.paper for sp in scored]
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=100, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[UserConfig(
+                user_id="alice",
+                subscriptions=SubscriptionConfig(sub_domains=sub_domains),
+                thresholds=UserThresholdsConfig(
+                    min_relevance=6.0, min_quality=5.0,
+                    top_n=15, per_sub_domain_top_n=20,
+                ),
+            )],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        results = Pipeline(config).run(dry_run=True)
+        # 10 domains × 5 papers each = 50 candidates after per-domain take 20.
+        # top_n=15 caps the merged result to 15.
+        assert len(results["alice"]) == 15
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_all_subscription_ignores_per_domain_limit(mock_scorer_cls, mock_fetcher_cls):
+    """Users subscribed to 'all' skip per-domain bucketing, get top_n directly."""
+    scored = [
+        _make_scored_paper(f"p{i:03d}", relevance=9.0 - i * 0.05, quality=7.0,
+                            tags=("quantization",))
+        for i in range(30)
+    ]
+    mock_scorer_cls.return_value.score.return_value = scored
+    mock_fetcher_cls.return_value.fetch.return_value = [sp.paper for sp in scored]
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=100, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[UserConfig(
+                user_id="team",
+                subscriptions=SubscriptionConfig(sub_domains=["all"]),
+                thresholds=UserThresholdsConfig(
+                    min_relevance=6.0, min_quality=5.0,
+                    top_n=12, per_sub_domain_top_n=3,  # would only give 3 if buckets applied
+                ),
+            )],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        results = Pipeline(config).run(dry_run=True)
+        # "all" bypasses per-domain; should get top_n=12 (not 3 from per_sub_domain_top_n)
+        assert len(results["team"]) == 12
+    finally:
+        os.unlink(db_path)
