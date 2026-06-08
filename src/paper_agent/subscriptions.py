@@ -121,9 +121,7 @@ def load_subscriptions_into_config(config: AppConfig) -> int:
             config.subscriptions.unsubscribe.secret,
         )
         if not unsubscribe_url:
-            logger.warning(
-                f"Unsubscribe link not configured for subscription user '{email}'"
-            )
+            logger.warning(f"Unsubscribe link not configured for subscription user '{email}'")
         config.users.append(
             subscription_to_user_config(
                 email,

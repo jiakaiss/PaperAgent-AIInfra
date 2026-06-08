@@ -381,10 +381,12 @@ def test_quality_filter_hides_low_quality_papers():
         path = f.name
     try:
         db = PaperDatabase(path)
-        db.cache_papers([
-            _make_scored_paper("2401.10001v1", "High Quality", quality=8.0),
-            _make_scored_paper("2401.10002v1", "Low Quality", quality=3.0),
-        ])
+        db.cache_papers(
+            [
+                _make_scored_paper("2401.10001v1", "High Quality", quality=8.0),
+                _make_scored_paper("2401.10002v1", "Low Quality", quality=3.0),
+            ]
+        )
         cfg = AppConfig(storage=StorageConfig(db_path=path))
         app = create_app(cfg)
         tc = TestClient(app)
@@ -404,10 +406,12 @@ def test_quality_filter_disabled_shows_low_quality_papers():
         path = f.name
     try:
         db = PaperDatabase(path)
-        db.cache_papers([
-            _make_scored_paper("2401.10001v1", "High Quality", quality=8.0),
-            _make_scored_paper("2401.10002v1", "Low Quality", quality=3.0),
-        ])
+        db.cache_papers(
+            [
+                _make_scored_paper("2401.10001v1", "High Quality", quality=8.0),
+                _make_scored_paper("2401.10002v1", "Low Quality", quality=3.0),
+            ]
+        )
         cfg = AppConfig(storage=StorageConfig(db_path=path), web=WebConfig(min_quality=0))
         app = create_app(cfg)
         tc = TestClient(app)
@@ -425,21 +429,23 @@ def test_quality_filter_combines_with_sub_domain_and_search():
         path = f.name
     try:
         db = PaperDatabase(path)
-        db.cache_papers([
-            _make_scored_paper(
-                "2401.10001v1",
-                "LLM Quantization High",
-                ("quantization",),
-                quality=8.0,
-            ),
-            _make_scored_paper(
-                "2401.10002v1",
-                "LLM Quantization Low",
-                ("quantization",),
-                quality=3.0,
-            ),
-            _make_scored_paper("2401.10003v1", "LLM MoE High", ("moe",), quality=8.0),
-        ])
+        db.cache_papers(
+            [
+                _make_scored_paper(
+                    "2401.10001v1",
+                    "LLM Quantization High",
+                    ("quantization",),
+                    quality=8.0,
+                ),
+                _make_scored_paper(
+                    "2401.10002v1",
+                    "LLM Quantization Low",
+                    ("quantization",),
+                    quality=3.0,
+                ),
+                _make_scored_paper("2401.10003v1", "LLM MoE High", ("moe",), quality=8.0),
+            ]
+        )
         cfg = AppConfig(storage=StorageConfig(db_path=path))
         app = create_app(cfg)
         tc = TestClient(app)
@@ -450,5 +456,302 @@ def test_quality_filter_combines_with_sub_domain_and_search():
         assert "LLM Quantization Low" not in resp.text
         assert "LLM MoE High" not in resp.text
         assert "共 1 篇论文" in resp.text
+    finally:
+        os.unlink(path)
+
+
+# ─── Tier filtering tests ───
+
+
+def _make_tiered_paper(
+    arxiv_id: str,
+    title: str,
+    impact_tier: str = "solid",
+    tags: tuple[str, ...] = ("quantization",),
+    relevance: float = 8.0,
+    quality: float = 7.0,
+) -> ScoredPaper:
+    paper = Paper(
+        arxiv_id=arxiv_id,
+        title=title,
+        authors=["Alice"],
+        abstract="abs",
+        published=datetime(2024, 1, 15),
+        categories=["cs.DC"],
+        pdf_url=f"https://arxiv.org/pdf/{arxiv_id}",
+        abs_url=f"https://arxiv.org/abs/{arxiv_id}",
+    )
+    return ScoredPaper(
+        paper=paper,
+        relevance_score=relevance,
+        quality_score=quality,
+        summary_zh="摘要",
+        sub_domain_tags=tags,
+        impact_tier=impact_tier,
+    )
+
+
+def test_tier_filter_breakthrough_only():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers(
+            [
+                _make_tiered_paper("000", "Breakthrough Paper", impact_tier="breakthrough"),
+                _make_tiered_paper("001", "Solid Paper", impact_tier="solid"),
+                _make_tiered_paper("002", "Incremental Paper", impact_tier="incremental"),
+            ]
+        )
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list?tier=breakthrough")
+        assert resp.status_code == 200
+        assert "Breakthrough Paper" in resp.text
+        assert "Solid Paper" not in resp.text
+        assert "Incremental Paper" not in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_tier_filter_multiple_tiers():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers(
+            [
+                _make_tiered_paper("000", "Breakthrough Paper", impact_tier="breakthrough"),
+                _make_tiered_paper("001", "Solid Paper", impact_tier="solid"),
+                _make_tiered_paper("002", "Incremental Paper", impact_tier="incremental"),
+            ]
+        )
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list?tier=breakthrough&tier=solid")
+        assert resp.status_code == 200
+        assert "Breakthrough Paper" in resp.text
+        assert "Solid Paper" in resp.text
+        assert "Incremental Paper" not in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_tier_default_excludes_incremental():
+    """No ?tier= param defaults to breakthrough + solid."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers(
+            [
+                _make_tiered_paper("000", "Breakthrough Paper", impact_tier="breakthrough"),
+                _make_tiered_paper("001", "Solid Paper", impact_tier="solid"),
+                _make_tiered_paper("002", "Incremental Paper", impact_tier="incremental"),
+            ]
+        )
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list")
+        assert resp.status_code == 200
+        assert "Breakthrough Paper" in resp.text
+        assert "Solid Paper" in resp.text
+        assert "Incremental Paper" not in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_tier_unknown_tier_ignored_uses_default():
+    """Unknown ?tier= values fall back to DEFAULT_TIERS."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers(
+            [
+                _make_tiered_paper("000", "Solid Paper", impact_tier="solid"),
+                _make_tiered_paper("001", "Incremental Paper", impact_tier="incremental"),
+            ]
+        )
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list?tier=legendary")
+        assert resp.status_code == 200
+        assert "Solid Paper" in resp.text
+        assert "Incremental Paper" not in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_tier_combined_with_sub_domain_and_search():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers(
+            [
+                _make_tiered_paper(
+                    "000",
+                    "Breakthrough MoE",
+                    impact_tier="breakthrough",
+                    tags=("moe",),
+                ),
+                _make_tiered_paper(
+                    "001",
+                    "Solid MoE",
+                    impact_tier="solid",
+                    tags=("moe",),
+                ),
+                _make_tiered_paper(
+                    "002",
+                    "Solid Quantization",
+                    impact_tier="solid",
+                    tags=("quantization",),
+                ),
+            ]
+        )
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        # AND logic across sub_domain=moe and tier=breakthrough
+        resp = tc.get("/_paper_list?sub_domain=moe&tier=breakthrough")
+        assert resp.status_code == 200
+        assert "Breakthrough MoE" in resp.text
+        assert "Solid MoE" not in resp.text
+        assert "Solid Quantization" not in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_tier_legacy_paper_appears_under_default():
+    """A paper scored before the upgrade (NULL impact_tier) counts as solid
+    and appears on the default page."""
+    import sqlite3
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers([_make_tiered_paper("000", "Legacy Friendly", impact_tier="solid")])
+        # Inject a legacy row with NULL impact_tier
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute(
+                """
+                INSERT INTO papers (arxiv_id, title, authors, abstract, published,
+                  categories, pdf_url, abs_url, relevance_score, quality_score,
+                  summary_zh, sub_domain_tags, scored_at)
+                VALUES ('legacy-1', 'Legacy Paper', 'A', 'abs', '2024-01-01',
+                        'cs.DC', 'p', 'a', 8.0, 7.0, 'sum', '[]', '2024-01-02')
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list")
+        assert resp.status_code == 200
+        # Legacy paper with NULL impact_tier appears as solid on the default page
+        assert "Legacy Paper" in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_tier_badge_appears_in_card():
+    """The tier badge HTML fragment renders for a breakthrough paper."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers([_make_tiered_paper("000", "Great Paper", impact_tier="breakthrough")])
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list?tier=breakthrough")
+        assert resp.status_code == 200
+        # Badge
+        assert "tier-badge-breakthrough" in resp.text
+        assert "重磅突破" in resp.text
+        # Card class
+        assert "tier-breakthrough" in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_key_contributions_renders_when_present():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+
+    try:
+        db = PaperDatabase(path)
+        sp = _make_tiered_paper("000", "Paper With Contributions", impact_tier="solid")
+        # Override to add contributions
+        db.cache_papers(
+            [
+                ScoredPaper(
+                    paper=sp.paper,
+                    relevance_score=sp.relevance_score,
+                    quality_score=sp.quality_score,
+                    summary_zh=sp.summary_zh,
+                    sub_domain_tags=sp.sub_domain_tags,
+                    key_contributions=("贡献 A", "贡献 B"),
+                    problem_statement_zh="问题描述",
+                    methods_zh="使用某某方法",
+                    impact_tier="solid",
+                )
+            ]
+        )
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list")
+        assert resp.status_code == 200
+        assert "关键贡献" in resp.text
+        assert "贡献 A" in resp.text
+        assert "贡献 B" in resp.text
+        assert "问题" in resp.text
+        assert "方法" in resp.text
+    finally:
+        os.unlink(path)
+
+
+def test_key_contributions_hidden_when_empty():
+    """Legacy papers (empty key_contributions) don't show contribution section."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+
+    try:
+        db = PaperDatabase(path)
+        db.cache_papers([_make_tiered_paper("000", "Old Paper", impact_tier="solid")])
+        cfg = AppConfig(storage=StorageConfig(db_path=path))
+        app = create_app(cfg)
+        tc = TestClient(app)
+
+        resp = tc.get("/_paper_list")
+        assert resp.status_code == 200
+        assert "Old Paper" in resp.text
+        assert "关键贡献" not in resp.text
     finally:
         os.unlink(path)

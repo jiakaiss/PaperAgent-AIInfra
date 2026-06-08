@@ -314,6 +314,124 @@ code {
 
 .paper-card:hover { box-shadow: var(--shadow-md); }
 
+/* ── Tier badge + per-tier card treatment ──
+ * Visual triage hint: breakthrough = highlighted left border + warm badge;
+ * solid = default styling + neutral badge;
+ * incremental = dimmed (reduced opacity) + muted badge. */
+.paper-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.6rem;
+    margin-bottom: 0.3rem;
+}
+
+.tier-badge {
+    flex-shrink: 0;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    align-self: flex-start;
+}
+
+.tier-badge-breakthrough {
+    background: #fde68a;       /* warm amber */
+    color: #92400e;
+    box-shadow: 0 0 0 1px #f59e0b inset;
+}
+.tier-badge-solid {
+    background: #e5e7eb;       /* neutral grey */
+    color: #374151;
+}
+.tier-badge-incremental {
+    background: #f3f4f6;       /* very light grey */
+    color: #9ca3af;
+}
+
+.paper-card.tier-breakthrough {
+    border-left: 4px solid #f59e0b;
+    padding-left: calc(1rem - 3px);  /* compensate for thicker border */
+}
+
+.paper-card.tier-incremental {
+    opacity: 0.72;
+}
+.paper-card.tier-incremental:hover {
+    opacity: 1;  /* lift dimming on hover so users can still scan details */
+}
+
+/* Structured-insight sections (key contributions, problem, methods)
+ * Each section has a colored badge label + left border + tinted background
+ * so the reader can triage at a glance instead of reading wall-of-text. */
+.paper-section-label {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-right: 0.5rem;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+}
+
+.paper-contributions,
+.paper-problem,
+.paper-methods {
+    margin: 0.5rem 0;
+    padding: 0.5rem 0.75rem;
+    border-left: 3px solid;
+    border-radius: 4px;
+    font-size: 0.88rem;
+    line-height: 1.55;
+}
+
+/* ── Key contributions: green (success / wins) ── */
+.paper-contributions {
+    background: #ecfdf5;          /* very light green */
+    border-left-color: #10b981;   /* emerald 500 */
+    color: #064e3b;               /* emerald 900 */
+}
+.paper-contributions .paper-section-label {
+    background: #10b981;
+    color: white;
+}
+.paper-contributions ul {
+    margin: 0.3rem 0 0 1.2rem;
+    padding: 0;
+    color: #1f2937;               /* darker for readability */
+}
+.paper-contributions li {
+    margin-bottom: 0.2rem;
+}
+.paper-contributions li::marker {
+    color: #10b981;               /* green bullets */
+}
+
+/* ── Problem: blue (the question being asked) ── */
+.paper-problem {
+    background: #eff6ff;          /* very light blue */
+    border-left-color: #3b82f6;   /* blue 500 */
+    color: #1e3a8a;               /* blue 900 */
+}
+.paper-problem .paper-section-label {
+    background: #3b82f6;
+    color: white;
+}
+
+/* ── Methods: purple (the approach) ── */
+.paper-methods {
+    background: #faf5ff;          /* very light purple */
+    border-left-color: #a855f7;   /* purple 500 */
+    color: #581c87;               /* purple 900 */
+}
+.paper-methods .paper-section-label {
+    background: #a855f7;
+    color: white;
+}
+
 .paper-title {
     font-size: 1.05rem;
     font-weight: 600;

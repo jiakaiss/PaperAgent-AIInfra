@@ -26,6 +26,27 @@
         </div>
 
         <div class="preferences-section">
+            <h3>最低影响力 (impact tier)</h3>
+            <div class="mode-toggle min-tier-toggle">
+                <label title="只看可能改变实践的重磅工作">
+                    <input type="radio" name="min_tier" id="min-tier-breakthrough"
+                           onchange="PaperAgentPrefs.setMinTier('breakthrough')">
+                    仅重磅突破
+                </label>
+                <label title="排除渐进改进论文（默认）">
+                    <input type="radio" name="min_tier" id="min-tier-solid"
+                           onchange="PaperAgentPrefs.setMinTier('solid')">
+                    稳健及以上（默认）
+                </label>
+                <label title="包含全部论文">
+                    <input type="radio" name="min_tier" id="min-tier-incremental"
+                           onchange="PaperAgentPrefs.setMinTier('incremental')">
+                    全部（含渐进改进）
+                </label>
+            </div>
+        </div>
+
+        <div class="preferences-section">
             <h3>关注领域 (sub-domain)</h3>
             <div class="sub-domain-bulk-actions">
                 <button type="button" class="btn btn-sm" id="sub-domain-toggle"

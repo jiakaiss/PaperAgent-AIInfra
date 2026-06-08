@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 
 from paper_agent.config import AppConfig, SubscriptionRequest
-from paper_agent.models import SUB_DOMAINS
+from paper_agent.models import IMPACT_TIERS, SUB_DOMAINS
 from paper_agent.storage.database import PaperDatabase
 from paper_agent.subscriptions import (
     build_unsubscribe_url,
@@ -30,6 +30,12 @@ router = APIRouter()
 PAGE_SIZE = 25
 VALID_MODES = {"all", "custom"}
 
+# Default tier set used when the client doesn't pass any ?tier= params.
+# Excludes "incremental" so the front page reads as a curated digest; users
+# who want everything pass ?tier=incremental (along with the others) or set
+# minTier=incremental in their localStorage preferences.
+DEFAULT_TIERS: set[str] = {"breakthrough", "solid"}
+
 # Map relative time range codes to days
 SINCE_MAP = {
     "1w": 7,
@@ -44,6 +50,20 @@ SINCE_MAP = {
 def _validate_sub_domains(tags: list[str]) -> list[str]:
     """Return only tags that are valid SUB_DOMAINS keys."""
     return [t for t in tags if t in SUB_DOMAINS]
+
+
+def _resolve_tiers(raw: list[str] | None) -> set[str]:
+    """Filter ?tier= values against IMPACT_TIERS; default when nothing valid.
+
+    - No params and no valid params alike fall back to ``DEFAULT_TIERS``
+      (breakthrough + solid). This matches the documented "default page
+      hides incremental" behavior.
+    - Unknown values are silently dropped (per the spec).
+    """
+    if not raw:
+        return set(DEFAULT_TIERS)
+    valid = {t for t in raw if t in IMPACT_TIERS}
+    return valid if valid else set(DEFAULT_TIERS)
 
 
 def _send_initial_digest(config: AppConfig, user_id: str) -> None:
@@ -100,6 +120,7 @@ def _compute_page_context(
     min_quality: float | None,
     page: int,
     page_size: int = PAGE_SIZE,
+    tiers: set[str] | None = None,
 ) -> dict:
     """Build the template context dict for the paper list + pagination."""
     total = db.count_papers(
@@ -107,6 +128,7 @@ def _compute_page_context(
         search=search,
         published_after=published_after,
         min_quality=min_quality,
+        tiers=tiers,
     )
     total_pages = max(1, math.ceil(total / page_size))
     page = max(1, min(page, total_pages))
@@ -116,6 +138,7 @@ def _compute_page_context(
         search=search,
         published_after=published_after,
         min_quality=min_quality,
+        tiers=tiers,
         limit=page_size,
         offset=offset,
     )
@@ -143,6 +166,7 @@ def index(
     db: PaperDatabase = Depends(get_db),
     mode: str | None = Query(None),
     sub_domain: list[str] | None = Query(None),
+    tier: list[str] | None = Query(None),
     q: str | None = Query(None),
     since: str | None = Query(None),
     page: int = Query(1, ge=1),
@@ -157,11 +181,18 @@ def index(
     active_tags = _validate_sub_domains(sub_domain or [])
     sub_domain_set = set(active_tags) if active_tags else None
 
+    # _resolve_tiers always returns a non-empty set (defaults to DEFAULT_TIERS
+    # when no valid tier param was provided), so the server always applies a
+    # tier filter — never an unfiltered query.
+    active_tiers = _resolve_tiers(tier)
+
     search = q.strip() if q else None
     published_after = _parse_since(since)
     config: AppConfig | None = getattr(request.app.state, "config", None)
     min_quality = config.web.min_quality if config else None
-    list_ctx = _compute_page_context(db, sub_domain_set, search, published_after, min_quality, page)
+    list_ctx = _compute_page_context(
+        db, sub_domain_set, search, published_after, min_quality, page, tiers=active_tiers
+    )
     sub_domain_counts = db.get_sub_domain_counts()
 
     return templates.TemplateResponse(
@@ -170,6 +201,7 @@ def index(
         context={
             "mode": active_mode,
             "active_sub_domains": active_tags,
+            "active_tiers": sorted(active_tiers),
             "search": search or "",
             "since": since,
             **list_ctx,
@@ -184,6 +216,7 @@ def paper_list_fragment(
     request: Request,
     db: PaperDatabase = Depends(get_db),
     sub_domain: list[str] | None = Query(None),
+    tier: list[str] | None = Query(None),
     q: str | None = Query(None),
     since: str | None = Query(None),
     page: int = Query(1, ge=1),
@@ -193,11 +226,14 @@ def paper_list_fragment(
 
     active_tags = _validate_sub_domains(sub_domain or [])
     sub_domain_set = set(active_tags) if active_tags else None
+    active_tiers = _resolve_tiers(tier)
     search = q.strip() if q else None
     published_after = _parse_since(since)
     config: AppConfig | None = getattr(request.app.state, "config", None)
     min_quality = config.web.min_quality if config else None
-    list_ctx = _compute_page_context(db, sub_domain_set, search, published_after, min_quality, page)
+    list_ctx = _compute_page_context(
+        db, sub_domain_set, search, published_after, min_quality, page, tiers=active_tiers
+    )
 
     return templates.TemplateResponse(
         request=request,
@@ -206,6 +242,7 @@ def paper_list_fragment(
             **list_ctx,
             "search": search or "",
             "active_sub_domains": active_tags,
+            "active_tiers": sorted(active_tiers),
             "since": since,
             "has_filters": bool(active_tags or search or published_after),
         },

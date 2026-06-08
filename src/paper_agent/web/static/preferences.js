@@ -10,7 +10,8 @@
     "use strict";
 
     const STORAGE_KEY = "paper_agent_prefs";
-    const DEFAULT_PREFS = { mode: "all", subDomains: [] };
+    const DEFAULT_PREFS = { mode: "all", subDomains: [], minTier: "solid" };
+    const VALID_TIERS = ["breakthrough", "solid", "incremental"];
 
     /** Read the list of valid sub-domain keys from the server-injected context. */
     function getValidSubDomains() {
@@ -38,7 +39,10 @@
             const subDomains = Array.isArray(parsed.subDomains)
                 ? parsed.subDomains.filter((t) => valid.has(t))
                 : [];
-            return { mode, subDomains };
+            const minTier = VALID_TIERS.includes(parsed.minTier)
+                ? parsed.minTier
+                : DEFAULT_PREFS.minTier;
+            return { mode, subDomains, minTier };
         } catch {
             return _resetToDefaults();
         }
@@ -108,6 +112,14 @@
         });
     }
 
+    /** Sync the minimum-tier radio buttons to the current preference. */
+    function _syncMinTierControl(minTier) {
+        VALID_TIERS.forEach(function (t) {
+            const radio = document.getElementById("min-tier-" + t);
+            if (radio) radio.checked = (t === minTier);
+        });
+    }
+
     /**
      * Synchronize every UI surface (mode radios, sub-domain checkboxes, chip
      * filter) with the given prefs. Call this after every mutation so the DOM
@@ -120,6 +132,7 @@
         _syncChips(p.subDomains);
         _syncToggleButton(p.subDomains);
         _syncTimeChips(_currentSince());
+        _syncMinTierControl(p.minTier);
     }
 
     function _commitPrefs(prefs) {
@@ -176,6 +189,29 @@
         toggleSubDomain(tag);
     }
 
+    /** Set the minimum tier (breakthrough/solid/incremental), persist, refresh. */
+    function setMinTier(tier) {
+        if (!VALID_TIERS.includes(tier)) return;
+        const prefs = getPrefs();
+        prefs.minTier = tier;
+        _commitPrefs(prefs);
+    }
+
+    /**
+     * Translate the stored minTier into the set of `tier=` query params the
+     * server expects. The server treats DEFAULT_TIERS = {breakthrough, solid}
+     * when no tier param is sent, so we only set explicit params for the
+     * two non-default cases:
+     *   - "breakthrough" → [breakthrough]
+     *   - "solid"        → omit (server default)
+     *   - "incremental"  → [breakthrough, solid, incremental]
+     */
+    function _tierParams(minTier) {
+        if (minTier === "breakthrough") return ["breakthrough"];
+        if (minTier === "incremental") return ["breakthrough", "solid", "incremental"];
+        return [];  // "solid" → use server default, no explicit params
+    }
+
     /** Read the current since value from the active time chip or URL. */
     function _currentSince() {
         const activeChip = document.querySelector(".chip-time.chip-active");
@@ -207,6 +243,8 @@
         if (prefs.mode === "custom" && prefs.subDomains.length > 0) {
             prefs.subDomains.forEach((t) => params.append("sub_domain", t));
         }
+        // Append tier params based on minTier preference.
+        _tierParams(prefs.minTier).forEach((t) => params.append("tier", t));
         if (opts.search) params.set("q", opts.search);
         const since = _currentSince();
         if (since) params.set("since", since);
@@ -298,6 +336,7 @@
         toggleChip,
         toggleAllSubDomains,
         setSince,
+        setMinTier,
         buildQueryString,
         refreshPaperList,
         applyPrefsToUrl,
