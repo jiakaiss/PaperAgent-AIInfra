@@ -32,6 +32,10 @@ paper-agent daemon -c config.yaml
 paper-agent stats -c config.yaml
 paper-agent web -c config.yaml                     # launch web UI on 127.0.0.1:8000
 paper-agent web --host 0.0.0.0 --port 9000 -c config.yaml  # custom bind
+
+# Backfill cached papers scored before the structured-insights upgrade.
+# Re-scores rows where impact_tier / key_contributions are NULL; safe to interrupt.
+paper-agent rescore --missing-fields -c config.yaml
 ```
 
 On Windows, set `PYTHONIOENCODING=utf-8` before running CLI to avoid GBK encoding errors with emoji output.
@@ -51,10 +55,19 @@ Fetch superset → Dedup against papers cache → Score with Claude → Cache re
 
 **Per-user phase** (runs for each user):
 ```
-Filter by sub_domain tags → Filter by thresholds → Dedup per-user → Notify → mark_sent
+Filter by tier (min_tier) → Filter by sub_domain tags → Filter by thresholds → Dedup per-user → Notify → mark_sent
 ```
 
 The `Pipeline._build_superset_keywords()` method unions all users' subscribed sub-domain keywords with global fetch keywords, so a single arXiv fetch covers everyone's interests.
+
+### Dual-Track Retrieval (`fetcher/arxiv_fetcher.py`)
+
+When `fetch.quality_floor_strategy = "per_keyword_cap"`, the fetcher runs two parallel paths in the same fetch:
+
+- **Track 1 (keyword)** — one query per individual keyword, each capped at `max(min_per_keyword, max_results // num_queries)` so a noisy keyword like `"serving"` can't dominate the budget and starve precise ones.
+- **Track 2 (cross-list)** — one query per category in `fetch.cross_list_categories` (default empty; recommended `["cs.LG", "cs.DC"]`) for recent papers regardless of keyword match. Catches papers whose terminology doesn't match any subscribed keyword.
+
+Both tracks dedup by `arxiv_id`; Track-1 records win on conflict so keyword provenance is preserved for debugging. Legacy mode (`quality_floor_strategy = "none"`, the default for existing configs) groups keywords in batches of 8 and skips Track 2 — identical to pre-upgrade behavior.
 
 ### Sub-Domain Taxonomy (`models.py`)
 
@@ -67,12 +80,28 @@ memory_optimization, communication, scheduling
 
 `SUB_DOMAINS` dict maps each sub-domain to its keyword list. The scorer emits 1-3 `sub_domain_tags` per paper.
 
+### Impact Tier (`models.py`)
+
+A coarse categorical signal the scorer assigns to every paper, used for triage UI and digest sorting:
+
+```
+IMPACT_TIERS = ("breakthrough", "solid", "incremental")
+```
+
+- **`breakthrough`** — novel technique or result likely to be widely cited or change practice
+- **`solid`** — well-executed, useful work incrementally advancing a clear baseline (the default; most papers)
+- **`incremental`** — minor variation, narrow scope, or limited evaluation
+
+The tier is judged by the LLM (not derived from numeric scores). `sort_by_score()` sorts by `(tier_rank ASC, total_score DESC)` so a breakthrough paper always outranks higher-scoring solid papers. Web UI excludes `incremental` by default; per-user digests obey `UserThresholdsConfig.min_tier` (default `"solid"`). Helpers: `tier_rank(tier) -> int`, `DEFAULT_TIER = "solid"`.
+
 ### Multi-User Config (`config.py`)
 
 Config structure (no backward compat with single-user format):
 ```python
 AppConfig
-├── FetchConfig       (global: categories, keywords, max_results, days_back)
+├── FetchConfig       (global: categories, keywords, max_results, days_back,
+│                      quality_floor_strategy, min_per_keyword,
+│                      cross_list_categories)
 ├── ScoringConfig     (global: model, batch_size, api_key, base_url, max_tokens,
 │                      temperature, tool_choice, abstract_max_length,
 │                      relevance_weight, quality_weight, prompts: PromptsConfig)
@@ -81,7 +110,8 @@ AppConfig
 │       ├── user_id, display_name
 │       ├── SubscriptionConfig (sub_domains: ["all"] or specific list)
 │       ├── UserNotifyConfig   (email, wecom, feishu, dingtalk)
-│       └── UserThresholdsConfig (min_relevance, min_quality, top_n)
+│       └── UserThresholdsConfig (min_relevance, min_quality, top_n,
+│                                  per_sub_domain_top_n, min_tier)
 ├── ScheduleConfig    (global)
 ├── StorageConfig     (global)
 └── LoggingConfig     (global)
@@ -96,8 +126,14 @@ Uses Claude's `tool_use` for structured output. The `SCORE_TOOL` schema includes
 - `quality_score` (0-10): overall quality
 - `summary_zh`: Chinese summary
 - `sub_domain_tags` (1-3 tags from the enum): sub-domain classification
+- `key_contributions` (1-3 short bullets, each ≤ 120 chars): distinguishing contributions
+- `problem_statement_zh` (1-2 sentences): the problem the paper addresses
+- `methods_zh` (1-2 sentences): the methods or approach used
+- `impact_tier` (`breakthrough` / `solid` / `incremental`): coarse impact tier
 
-Papers are scored in batches (default 10) to reduce API calls.
+Papers are scored in batches (default 10). After each batch the scorer logs a `tier distribution: breakthrough=N solid=M incremental=K` line for spot-checking calibration. Bullets exceeding the cap are truncated with a warning; unknown `impact_tier` values fall back to `"solid"` with a warning. After upgrading, fresh scoring runs use roughly ~30% more output tokens per paper due to the new prose fields.
+
+**`relevance_weight` / `quality_weight` interaction with tier**: weights still control how `total_score` is computed within a tier, but tier rank is the primary sort key. So tweaking the weights only changes ordering inside a tier — to elevate a paper *across* tiers you need the LLM to reclassify it (e.g. via a sharper `prompts.system_prompt`).
 
 **Configurable `ScoringConfig` fields** (all optional, with sensible defaults matching prior hardcoded values):
 - `api_key` / `base_url`: LLM API connection. Supports `${ENV_VAR}` interpolation. `api_key=None` falls back to `ANTHROPIC_API_KEY` env var.
@@ -116,15 +152,18 @@ papers (arxiv_id PK)       -- score cache, shared across users
 sent_papers (user_id, arxiv_id PK) -- per-user delivery tracking
 ```
 
+The `papers` table gained 4 columns in the structured-insights upgrade — `key_contributions` (JSON-encoded TEXT), `problem_statement_zh`, `methods_zh`, `impact_tier`. The migration runs on startup via idempotent `ALTER TABLE ADD COLUMN` (guarded by `PRAGMA table_info` so repeat starts are no-ops). Legacy rows with NULL values read back as `()` / `""` / `""` / `"solid"` so they render gracefully in the web UI without forcing a rescore. Use `paper-agent rescore --missing-fields` to opt-in to backfilling them.
+
 Key methods:
 - `filter_uncached(ids)`: IDs not yet scored (need Claude API call)
-- `cache_papers(scored)`: store scored papers
+- `cache_papers(scored)`: store scored papers (writes all 17 columns)
 - `load_cached_papers(ids)`: retrieve previously scored papers
 - `filter_unsent_for_user(user_id, ids)`: IDs not yet sent to specific user
 - `mark_sent(user_id, papers)`: record delivery
-- `list_papers(sub_domains, search, limit, offset)`: paginated filtered list (web UI)
-- `count_papers(sub_domains, search)`: matching count for pagination
+- `list_papers(sub_domains, search, tiers, limit, offset)`: paginated filtered list. Tier filter uses `COALESCE(impact_tier, 'solid') IN (...)` so legacy NULL rows count as solid. Order: `impact_tier` rank ASC, then `total_score` DESC.
+- `count_papers(sub_domains, search, tiers)`: matching count for pagination
 - `get_sub_domain_counts()`: per-tag paper counts for chip badges
+- `count_papers_missing_insights()` / `get_papers_missing_insights(limit, offset)`: used by the rescore backfill CLI
 
 Connections are opened with WAL journal mode and a 30-second busy timeout so the web server can read concurrently while the daemon writes.
 
@@ -139,7 +178,12 @@ A FastAPI + Jinja2 + HTMX web UI launched by `paper-agent web`. The server is a 
 - `web/templates/`: `base.html`, `index.html`, `_paper_list.html`.
 - `web/static/`: `style.css`, `preferences.js`, `app.js`, `vendor/htmx.min.js`.
 
-**Preferences live in browser `localStorage`** under the key `paper_agent_prefs` with shape `{ mode: "all" | "custom", subDomains: string[] }`. The client JS (`preferences.js`) reads prefs on load, validates sub-domain tags against `SUB_DOMAINS` keys, and translates them into URL query params (`?sub_domain=...&q=...`) when fetching `/_paper_list` via HTMX. A `?mode=all|custom` URL override writes the value to `localStorage` and strips the param from the address bar.
+**Preferences live in browser `localStorage`** under the key `paper_agent_prefs` with shape `{ mode: "all" | "custom", subDomains: string[], minTier: "breakthrough" | "solid" | "incremental" }`. The client JS (`preferences.js`) reads prefs on load, validates sub-domain tags against `SUB_DOMAINS` keys, validates `minTier` against `IMPACT_TIERS`, and translates them into URL query params (`?sub_domain=...&tier=...&q=...`) when fetching `/_paper_list` via HTMX. A `?mode=all|custom` URL override writes the value to `localStorage` and strips the param from the address bar.
+
+**Tier filtering**: `/` and `/_paper_list` accept repeated `?tier=<value>` params. When no `tier` is provided, the server defaults to `{breakthrough, solid}` (excludes `incremental`). The preferences panel has a "minimum tier" radio control bound to `localStorage.minTier`:
+- `breakthrough` → client sends `?tier=breakthrough` only
+- `solid` (default) → client omits `?tier=` (server default kicks in)
+- `incremental` → client sends `?tier=breakthrough&tier=solid&tier=incremental` (everything)
 
 **Sub-domain chip filter** on the main page and the **preferences panel checkboxes** share the same `subDomains` array in `localStorage`. Toggling either updates the other and re-fetches the paper list.
 

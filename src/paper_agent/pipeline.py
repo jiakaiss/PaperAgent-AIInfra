@@ -11,7 +11,13 @@ import logging
 
 from paper_agent.config import AppConfig, UserConfig
 from paper_agent.fetcher.arxiv_fetcher import ArxivFetcher
-from paper_agent.models import SUB_DOMAINS, ScoredPaper, ScoreWeights, sort_by_score
+from paper_agent.models import (
+    SUB_DOMAINS,
+    ScoredPaper,
+    ScoreWeights,
+    sort_by_score,
+    tier_rank,
+)
 from paper_agent.notifier import Notifier, create_notifiers_for_user
 from paper_agent.scorer.claude_scorer import ClaudeScorer
 from paper_agent.storage.database import PaperDatabase
@@ -31,6 +37,9 @@ class Pipeline:
         self.fetcher = ArxivFetcher(
             categories=config.fetch.categories,
             keywords=all_keywords,
+            quality_floor_strategy=config.fetch.quality_floor_strategy,
+            min_per_keyword=config.fetch.min_per_keyword,
+            cross_list_categories=config.fetch.cross_list_categories,
         )
         self.scorer = ClaudeScorer(config=config.scoring)
         self.db = PaperDatabase(config.storage.db_path)
@@ -102,8 +111,7 @@ class Pipeline:
         scored_cached = self.db.load_cached_papers([p.arxiv_id for p in cached_papers])
         all_scored = scored_new + scored_cached
         logger.info(
-            f"Ingest complete. {len(scored_new)} new, "
-            f"{len(all_scored)} fetched scored papers."
+            f"Ingest complete. {len(scored_new)} new, {len(all_scored)} fetched scored papers."
         )
         return all_scored
 
@@ -189,13 +197,19 @@ class Pipeline:
         sub_domains = user.subscriptions.sub_domains
         min_rel = user.thresholds.min_relevance
         min_qual = user.thresholds.min_quality
+        min_tier_rank = tier_rank(user.thresholds.min_tier)
         weights = self.score_weights
+
+        # Tier filter: exclude papers whose impact_tier rank exceeds the
+        # user's configured minimum (lower rank = higher priority).
+        tier_filtered = [sp for sp in all_scored if tier_rank(sp.impact_tier) <= min_tier_rank]
 
         if "all" in sub_domains:
             # "all" subscribers: filter by thresholds and take user-level top_n.
             # Per-domain limit doesn't apply because there's no sub-domain to bucket by.
             filtered = [
-                sp for sp in all_scored
+                sp
+                for sp in tier_filtered
                 if sp.relevance_score >= min_rel and sp.quality_score >= min_qual
             ]
             filtered = sort_by_score(filtered, weights=weights)[: user.thresholds.top_n]
@@ -207,7 +221,8 @@ class Pipeline:
             merged: list = []
             for sd in sub_domains:
                 bucket = [
-                    sp for sp in all_scored
+                    sp
+                    for sp in tier_filtered
                     if sd in sp.sub_domain_tags
                     and sp.relevance_score >= min_rel
                     and sp.quality_score >= min_qual

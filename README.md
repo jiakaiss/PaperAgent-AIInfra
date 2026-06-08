@@ -6,12 +6,16 @@
 
 - 自动抓取 arXiv 上最新的 AI Infra 相关论文
 - 使用 Claude 对论文进行相关度、质量打分，自动分类到 14 个子领域
+- **影响力分级** — 每篇论文自动分到「重磅突破 / 稳健工作 / 渐进改进」三档，前端按 tier 排序与视觉区分
+- **结构化洞察** — 评分时额外抽取「关键贡献 / 问题陈述 / 方法概述」，前端与邮件用彩色卡片高亮展示
+- **双轨抓取**（可选）— 每个关键词独立配额避免噪声词独占 + cs.LG/cs.DC 跨列表兜底，捞回用了不同术语的高质量工作
 - 支持邮件、企业微信、飞书、钉钉多渠道推送
-- **多用户支持** — 不同用户可订阅不同子领域，独立推送
-- **Web 浏览界面** — FastAPI + HTMX 论文浏览页，支持子领域筛选、标题搜索、时间范围过滤、分页
-- **偏好设置** — 基于 localStorage 的浏览模式切换和子领域选择，筛选条件会同步到 URL
+- **多用户支持** — 不同用户可订阅不同子领域、配置独立的影响力阈值，独立推送
+- **Web 浏览界面** — FastAPI + HTMX 论文浏览页，支持子领域筛选、影响力 tier 筛选、标题搜索、时间范围过滤、分页
+- **偏好设置** — 基于 localStorage 的浏览模式切换、子领域选择、最低影响力档位，筛选条件会同步到 URL
 - **Web 自助订阅** — 访问 `/subscribe` 输入邮箱和关注领域，自动加入定时邮件推送
 - **全局邮件配置** — 订阅用户统一继承 `config.email` SMTP 配置，支持 `${ENV_VAR}` 注入敏感信息
+- **数据库自动迁移** — 升级后老数据无缝兼容，可选 `paper-agent rescore --missing-fields` 回填新字段
 - **部署前自检** — `paper-agent doctor` 检查配置、数据库、Web 资源和邮件配置
 - **Docker / VPS 部署** — 提供 Dockerfile、docker-compose、`.env.example`、部署/备份/恢复脚本
 - 可配置的 daemon 定时任务：后台按间隔查询/评分/入库，每日定时从缓存推送
@@ -46,6 +50,9 @@ paper-agent init
 - `scoring.api_key` / `scoring.base_url`：LLM API 配置，支持 `${ENV_VAR}` 环境变量注入
 - `email`：全局 SMTP 配置，供 Web 自助订阅用户接收邮件推送
 - `users`：手动配置的用户，可继续使用飞书/企业微信/钉钉/邮件等通知渠道
+- `users[].thresholds.min_tier`：用户级影响力阈值（`breakthrough` / `solid` / `incremental`），默认 `solid`（排除渐进改进）
+- `fetch.quality_floor_strategy`：双轨抓取开关（`none` / `per_keyword_cap`），默认关闭保持向后兼容
+- `fetch.cross_list_categories`：双轨抓取中轨道 2 的 arXiv 分类（如 `[cs.LG, cs.DC]`），仅在 `per_keyword_cap` 下生效
 - `storage.db_path`：SQLite 数据库路径，Docker 部署时建议使用 `/app/data/paper_agent.db`
 - `schedule`：daemon 后台查询频率和每日推送时间配置
 
@@ -69,6 +76,10 @@ paper-agent daemon -c config.yaml
 
 # 启动 Web UI（http://127.0.0.1:8000）
 paper-agent web -c config.yaml
+
+# 给老论文（升级前未打 tier / 关键贡献的）批量补全结构化字段
+# 会调 Claude API 花钱；每批一个事务，可随时 Ctrl+C 中断后重跑续上
+paper-agent rescore --missing-fields -c config.yaml
 ```
 
 Linux 本地/服务器可使用启动脚本：
@@ -120,6 +131,7 @@ scripts/restore.sh deploy/backups/paper_agent-YYYYMMDD-HHMMSS.db
 | `paper-agent run` | 单次运行抓取、评分和推送 |
 | `paper-agent daemon` | 启动定时任务守护进程 |
 | `paper-agent web` | 启动 Web 浏览界面 |
+| `paper-agent rescore --missing-fields` | 给老论文补全 tier / 关键贡献等结构化字段 |
 | `paper-agent doctor` | 检查部署前配置、数据库、Web 资源和邮件配置 |
 | `paper-agent test` | 测试通知渠道配置 |
 | `paper-agent stats` | 查看数据库统计信息 |
@@ -129,11 +141,13 @@ scripts/restore.sh deploy/backups/paper_agent-YYYYMMDD-HHMMSS.db
 
 启动后访问 `http://127.0.0.1:8000`，支持以下功能：
 
+- **影响力分级筛选** — 按「仅重磅突破 / 稳健及以上（默认）/ 全部含渐进改进」三档筛选，首页默认隐藏「渐进改进」论文
 - **子领域筛选** — 点击标签 chip 按子领域过滤论文
 - **时间范围** — 按发布时间过滤（近一周/月/3月/半年/1年/3年）
 - **标题搜索** — 按关键词搜索论文标题
-- **偏好设置** — 切换「全量论文」/「自定义领域」浏览模式
-- **分页** — 每页 25 篇，按综合得分（相关度 × 0.6 + 质量 × 0.4）排序
+- **偏好设置** — 切换「全量论文」/「自定义领域」浏览模式，选择最低影响力档位
+- **结构化论文卡片** — 每篇论文展示影响力徽章（重磅突破带橙色边框 + 琥珀色标记）、关键贡献（绿色块）、问题陈述（蓝色块）、方法概述（紫色块）、子领域标签和评分
+- **分页** — 每页 25 篇，按影响力优先排序（breakthrough → solid → incremental），同 tier 内按综合得分排序
 - **URL 可分享** — 筛选条件编码在 URL 中，可收藏或分享
 - **自助订阅** — 访问 `/subscribe` 填写邮箱和关注领域，订阅信息写入 SQLite，daemon 后续按订阅推送
 
@@ -201,6 +215,23 @@ paper-agent doctor -c deploy/config/config.yaml
 系统自动将论文分类到 14 个 AI Infra 子领域：
 
 `quantization` · `distillation` · `pruning` · `sparsity` · `distributed_training` · `parallelism` · `serving` · `speculative_decoding` · `kv_cache` · `moe` · `compiler` · `memory_optimization` · `communication` · `scheduling`
+
+## 影响力分级
+
+每篇论文由 LLM 评估后归入三级 impact tier，用于前端视觉区分和用户级过滤：
+
+| 分级 | 含义 | 前端样式 | 默认显示 |
+|---|---|---|---|
+| **重磅突破** (`breakthrough`) | 可能改变实践的新技术/成果 | 橙色左边框 + 琥珀色徽章 | ✅ |
+| **稳健工作** (`solid`) | 工作扎实的有用改进 | 灰色徽章，标准样式 | ✅ |
+| **渐进改进** (`incremental`) | 小幅变化，范围狭窄，评估有限 | 半透明 + 浅灰徽章 | ❌ 隐藏 |
+
+排序规则：**先按 tier 优先级排**（breakthrough → solid → incremental），同 tier 内按综合得分降序。
+
+用户可通过以下方式控制：
+- **config 配置**：`users[].thresholds.min_tier`（`breakthrough` / `solid` / `incremental`）
+- **Web 偏好面板**：最低影响力三档单选开关
+- **URL 参数**：`?tier=breakthrough&tier=solid&tier=incremental`
 
 ## 技术栈
 

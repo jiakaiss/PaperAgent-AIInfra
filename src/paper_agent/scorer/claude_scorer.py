@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import anthropic
 
-from paper_agent.models import SUB_DOMAINS, Paper, ScoredPaper
+from paper_agent.models import IMPACT_TIERS, SUB_DOMAINS, Paper, ScoredPaper
 
 if TYPE_CHECKING:
     from paper_agent.config import PromptsConfig, ScoringConfig
@@ -29,11 +29,18 @@ logger = logging.getLogger(__name__)
 # Build the sub-domain enum list for the tool schema
 SUB_DOMAIN_KEYS = list(SUB_DOMAINS.keys())
 
+# Bounds for the new structured fields. Centralised so validation in
+# _score_batch and the tool schema description stay in sync.
+MAX_KEY_CONTRIBUTIONS = 3
+MAX_CONTRIBUTION_CHARS = 120
+DEFAULT_IMPACT_TIER = "solid"
+
 SCORE_TOOL = {
     "name": "score_papers",
     "description": (
         "Score each paper for AI Infrastructure relevance and quality, "
-        "and assign sub-domain tags"
+        "assign sub-domain tags, and extract structured insights "
+        "(key contributions, problem framing, methods, impact tier)."
     ),
     "input_schema": {
         "type": "object",
@@ -77,6 +84,48 @@ SCORE_TOOL = {
                             "minItems": 1,
                             "maxItems": 3,
                         },
+                        "key_contributions": {
+                            "type": "array",
+                            "description": (
+                                f"1-{MAX_KEY_CONTRIBUTIONS} short bullet phrases "
+                                f"capturing this paper's distinguishing contributions. "
+                                f"Each bullet must be ≤ {MAX_CONTRIBUTION_CHARS} "
+                                "characters. Prefer concrete claims "
+                                '("reduces KV cache by 4x") over generic ones '
+                                '("novel method"). Write in the same language as '
+                                "the abstract."
+                            ),
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                            "maxItems": MAX_KEY_CONTRIBUTIONS,
+                        },
+                        "problem_statement_zh": {
+                            "type": "string",
+                            "description": (
+                                "1-2 sentences in Chinese describing the problem "
+                                "the paper addresses."
+                            ),
+                        },
+                        "methods_zh": {
+                            "type": "string",
+                            "description": (
+                                "1-2 sentences in Chinese describing the methods or approach used."
+                            ),
+                        },
+                        "impact_tier": {
+                            "type": "string",
+                            "description": (
+                                "Coarse impact tier. "
+                                "'breakthrough' = novel technique or result likely "
+                                "to be widely cited or change practice; "
+                                "'solid' = well-executed, useful, incremental on a "
+                                "clear baseline (most papers); "
+                                "'incremental' = minor variation, narrow scope, or "
+                                "limited evaluation. Be conservative: when in doubt "
+                                "choose 'solid'."
+                            ),
+                            "enum": list(IMPACT_TIERS),
+                        },
                     },
                     "required": [
                         "index",
@@ -84,6 +133,10 @@ SCORE_TOOL = {
                         "quality_score",
                         "summary_zh",
                         "sub_domain_tags",
+                        "key_contributions",
+                        "problem_statement_zh",
+                        "methods_zh",
+                        "impact_tier",
                     ],
                 },
             }
@@ -146,6 +199,21 @@ is to evaluate academic papers for their relevance to AI Infra and overall quali
 - 5-6: Decent work, some interesting ideas
 - 3-4: Incremental or limited contribution
 - 0-2: Low quality or poorly executed
+
+**Impact Tier** (categorical, for triage UI — be conservative, lean toward `solid`):
+- `breakthrough`: Novel technique or result likely to be widely cited or change
+  practice; introduces a primitive others will build on.
+- `solid`: Well-executed, useful work that incrementally advances a clear
+  baseline. This is the right answer for most papers.
+- `incremental`: Minor variation, narrow scope, or limited evaluation;
+  reproduces a known idea with small tweaks.
+
+**Structured Insights** (extract per paper):
+- `key_contributions`: 1-3 short bullet phrases. Prefer concrete claims
+  ("reduces KV cache memory by 4x with <1% accuracy drop") over generic ones
+  ("novel attention method"). Each bullet ≤ 120 characters.
+- `problem_statement_zh`: 1-2 Chinese sentences naming the concrete problem.
+- `methods_zh`: 1-2 Chinese sentences naming the approach.
 
 Provide concise, accurate Chinese summaries (1-2 sentences)."""
 
@@ -292,6 +360,34 @@ class ClaudeScorer:
                         # Validate sub_domain_tags
                         tags = item.get("sub_domain_tags", [])
                         valid_tags = tuple(t for t in tags if t in SUB_DOMAIN_KEYS)
+
+                        # Validate key_contributions: truncate to max, log excess
+                        raw_contribs = item.get("key_contributions", [])
+                        contribs = tuple(c[:MAX_CONTRIBUTION_CHARS] for c in raw_contribs)
+                        if len(contribs) > MAX_KEY_CONTRIBUTIONS:
+                            logger.warning(
+                                "Paper %s returned %d key_contributions; truncated to first %d.",
+                                papers[idx].arxiv_id,
+                                len(raw_contribs),
+                                MAX_KEY_CONTRIBUTIONS,
+                            )
+                            contribs = contribs[:MAX_KEY_CONTRIBUTIONS]
+
+                        # Validate impact_tier: unknown values fall back to solid
+                        raw_tier = item.get("impact_tier", DEFAULT_IMPACT_TIER)
+                        if raw_tier not in IMPACT_TIERS:
+                            logger.warning(
+                                "Paper %s returned unknown impact_tier=%r; falling back to '%s'.",
+                                papers[idx].arxiv_id,
+                                raw_tier,
+                                DEFAULT_IMPACT_TIER,
+                            )
+                            raw_tier = DEFAULT_IMPACT_TIER
+
+                        # Allow empty prose fields but log once (aggregate below)
+                        problem_zh = item.get("problem_statement_zh", "") or ""
+                        methods_zh = item.get("methods_zh", "") or ""
+
                         scored.append(
                             ScoredPaper(
                                 paper=papers[idx],
@@ -299,6 +395,10 @@ class ClaudeScorer:
                                 quality_score=float(item["quality_score"]),
                                 summary_zh=item["summary_zh"],
                                 sub_domain_tags=valid_tags,
+                                key_contributions=contribs,
+                                problem_statement_zh=problem_zh,
+                                methods_zh=methods_zh,
+                                impact_tier=raw_tier,
                             )
                         )
 
@@ -326,4 +426,18 @@ class ClaudeScorer:
                 continue
 
         logger.info(f"Total scored: {len(all_scored)}/{len(papers)} papers")
+        _log_tier_distribution(all_scored)
         return all_scored
+
+
+def _log_tier_distribution(scored: list[ScoredPaper]) -> None:
+    """Log how scored papers break down by impact tier."""
+    if not scored:
+        return
+    counts = {tier: 0 for tier in IMPACT_TIERS}
+    for sp in scored:
+        # tier_rank() coerces unknown values; mirror that here so totals add up.
+        bucket = sp.impact_tier if sp.impact_tier in counts else DEFAULT_IMPACT_TIER
+        counts[bucket] += 1
+    parts = " ".join(f"{tier}={counts[tier]}" for tier in IMPACT_TIERS)
+    logger.info("tier distribution: %s", parts)

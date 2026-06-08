@@ -36,6 +36,22 @@ fetch:
   max_results: 200
   days_back: 2
 
+  # ─── 双轨检索（质量底线策略） ───
+  # "none"             —— 兼容老行为：所有关键词共享 max_results 预算，
+  #                       一个噪声关键词（如 "serving"）可能挤掉小众关键词。
+  # "per_keyword_cap"  —— 开启双轨：
+  #                       • 轨道1：每个关键词独立查询，单独配额，避免独占；
+  #                       • 轨道2：再按 cross_list_categories 拉一遍近期论文，
+  #                         补上"用了别的术语，关键词没命中"的高质量工作。
+  # 新部署推荐改为 per_keyword_cap，老配置默认保持 none 不变行为。
+  quality_floor_strategy: none
+  # 每个关键词查询的最小返回数（仅在 per_keyword_cap 下生效）。
+  # 实际配额 = max(min_per_keyword, max_results // num_queries)。
+  min_per_keyword: 10
+  # 轨道2 使用的 arXiv 分类（仅在 per_keyword_cap 下生效）。
+  # 留空 [] 等于禁用轨道2；新部署推荐 [cs.LG, cs.DC]。
+  cross_list_categories: []
+
 # ─── LLM 打分配置（全局共享） ───
 scoring:
   model: claude-haiku-4-5       # 模型名称（可换成为其他 Anthropic 模型）
@@ -136,6 +152,9 @@ users:
       min_relevance: 6.0
       min_quality: 5.0
       top_n: 10
+      # min_tier: solid    # 影响力阈值；"breakthrough" = 仅重磅工作，
+                          # "solid"（默认）= 排除渐进改进，
+                          # "incremental" = 包含全部。
       # per_sub_domain_top_n: 20   # 每个订阅领域独立取 top N 后合集去重；订阅 ["all"] 时不生效
 
   # ─── 示例用户 2: Bob，关注蒸馏和 MoE ───

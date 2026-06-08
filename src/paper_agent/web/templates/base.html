@@ -6,8 +6,8 @@
     <title>{% block title %}Paper Agent{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css?v={{ style_version }}">
     <script src="/static/vendor/htmx.min.js"></script>
-    <script src="/static/preferences.js" defer></script>
-    <script src="/static/app.js" defer></script>
+    <script src="/static/preferences.js?v={{ prefs_version }}" defer></script>
+    <script src="/static/app.js?v={{ app_version }}" defer></script>
 </head>
 <body>
     <header class="site-header">

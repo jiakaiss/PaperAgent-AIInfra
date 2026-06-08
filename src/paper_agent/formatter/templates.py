@@ -4,18 +4,63 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from paper_agent.models import ScoredPaper
+from paper_agent.models import IMPACT_TIERS, ScoredPaper
+
+# zh labels for impact tier section headers (per design decision: tier
+# headers are localized in zh to match summary_zh).
+TIER_LABELS_ZH: dict[str, str] = {
+    "breakthrough": "重磅突破",
+    "solid": "稳健工作",
+    "incremental": "渐进改进",
+}
+
+# Inline CSS per tier — email clients require styles inline. Mirrors the
+# web UI's tier-* classes but expressed as ready-to-substitute fragments.
+_TIER_STYLE = {
+    "breakthrough": {
+        "border": "border-left: 4px solid #f59e0b;",
+        "opacity": "",
+        "badge_bg": "#fde68a",
+        "badge_fg": "#92400e",
+    },
+    "solid": {
+        "border": "",
+        "opacity": "",
+        "badge_bg": "#e5e7eb",
+        "badge_fg": "#374151",
+    },
+    "incremental": {
+        "border": "",
+        "opacity": "opacity: 0.78;",
+        "badge_bg": "#f3f4f6",
+        "badge_fg": "#9ca3af",
+    },
+}
 
 
 def format_paper_line(sp: ScoredPaper, index: int) -> str:
-    """Format a single paper as a compact line for messaging."""
-    return (
-        f"**{index}. {sp.paper.title}**\n"
-        f"   📊 相关度: {sp.relevance_score:.1f}/10  质量: {sp.quality_score:.1f}/10\n"
-        f"   📝 {sp.summary_zh}\n"
-        f"   🏷️ {sp.sub_domain_display}\n"
-        f"   🔗 [论文]({sp.paper.abs_url}) | [PDF]({sp.paper.pdf_url})"
-    )
+    """Format a single paper as a compact line for messaging.
+
+    Includes the impact tier as a prefix marker so webhook recipients
+    (Feishu / WeCom / DingTalk) also see the tiering signal.
+    """
+    tier = sp.impact_tier if sp.impact_tier in TIER_LABELS_ZH else "solid"
+    tier_marker = TIER_LABELS_ZH[tier]
+    parts = [
+        f"**[{tier_marker}] {index}. {sp.paper.title}**",
+        f"   📊 相关度: {sp.relevance_score:.1f}/10  质量: {sp.quality_score:.1f}/10",
+        f"   📝 {sp.summary_zh}",
+    ]
+    if sp.key_contributions:
+        bullets = "; ".join(sp.key_contributions)
+        parts.append(f"   ✨ 关键贡献: {bullets}")
+    if sp.problem_statement_zh:
+        parts.append(f"   🎯 问题: {sp.problem_statement_zh}")
+    if sp.methods_zh:
+        parts.append(f"   🛠 方法: {sp.methods_zh}")
+    parts.append(f"   🏷️ {sp.sub_domain_display}")
+    parts.append(f"   🔗 [论文]({sp.paper.abs_url}) | [PDF]({sp.paper.pdf_url})")
+    return "\n".join(parts)
 
 
 def format_markdown(papers: list[ScoredPaper], title: str | None = None) -> str:
@@ -38,35 +83,103 @@ def format_markdown(papers: list[ScoredPaper], title: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> str:
-    """Format papers as HTML email."""
-    if not papers:
-        return "<p>今日无符合条件的高质量 AI Infra 论文。</p>"
+def _group_papers_by_tier(
+    papers: list[ScoredPaper],
+) -> list[tuple[str, list[ScoredPaper]]]:
+    """Group papers into tier-ordered sections (breakthrough → solid → incremental).
 
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    Empty sections are skipped. Unknown tiers (NULL / typo) bucket into 'solid'.
+    """
+    buckets: dict[str, list[ScoredPaper]] = {tier: [] for tier in IMPACT_TIERS}
+    for sp in papers:
+        tier = sp.impact_tier if sp.impact_tier in buckets else "solid"
+        buckets[tier].append(sp)
+    return [(tier, papers) for tier, papers in buckets.items() if papers]
 
-    rows = []
-    for i, sp in enumerate(papers, 1):
-        authors = ", ".join(sp.paper.authors[:5])
-        if len(sp.paper.authors) > 5:
-            authors += " et al."
 
-        # Sub-domain tags as colored badges
-        tag_badges = (
-            " ".join(
-                f'<span style="background:#fff3e0; color:#e65100; padding:2px 8px; '
-                f'border-radius:12px; font-size:11px; margin-right:4px;">{tag}</span>'
-                for tag in sp.sub_domain_tags
-            )
-            or '<span style="color:#999; font-size:11px;">general</span>'
+def _paper_row(sp: ScoredPaper, index: int) -> str:
+    """Render one paper as an HTML table row with per-tier styling."""
+    authors = ", ".join(sp.paper.authors[:5])
+    if len(sp.paper.authors) > 5:
+        authors += " et al."
+
+    tag_badges = (
+        " ".join(
+            f'<span style="background:#fff3e0; color:#e65100; padding:2px 8px; '
+            f'border-radius:12px; font-size:11px; margin-right:4px;">{tag}</span>'
+            for tag in sp.sub_domain_tags
         )
+        or '<span style="color:#999; font-size:11px;">general</span>'
+    )
 
-        rows.append(f"""
+    tier = sp.impact_tier if sp.impact_tier in _TIER_STYLE else "solid"
+    style = _TIER_STYLE[tier]
+    cell_inline_style = (
+        f"padding:12px 8px; border-bottom:1px solid #eee; {style['border']} {style['opacity']}"
+    )
+
+    # Structured insights — each block hidden if its source field is empty.
+    # Visual styling matches the web UI: colored badge + left border +
+    # tinted background. All styles inlined because email clients reliably
+    # support only inline CSS (Gmail strips <style> tags in some cases).
+    contributions_html = ""
+    if sp.key_contributions:
+        bullets = "".join(
+            f'<li style="margin-bottom:3px; color:#1f2937;">{c}</li>'
+            for c in sp.key_contributions
+        )
+        contributions_html = f"""
+                <div style="margin-top:10px; padding:8px 12px;
+                            background:#ecfdf5; border-left:3px solid #10b981;
+                            border-radius:4px; font-size:13px; line-height:1.55;">
+                    <span style="display:inline-block; background:#10b981;
+                                 color:white; font-weight:700; font-size:11px;
+                                 padding:2px 8px; border-radius:999px;
+                                 letter-spacing:0.02em;">
+                        关键贡献
+                    </span>
+                    <ul style="margin:6px 0 0 18px; padding:0;">{bullets}</ul>
+                </div>"""
+
+    problem_html = ""
+    if sp.problem_statement_zh:
+        problem_html = f"""
+                <div style="margin-top:8px; padding:8px 12px;
+                            background:#eff6ff; border-left:3px solid #3b82f6;
+                            border-radius:4px; color:#1e3a8a; font-size:13px;
+                            line-height:1.55;">
+                    <span style="display:inline-block; background:#3b82f6;
+                                 color:white; font-weight:700; font-size:11px;
+                                 padding:2px 8px; border-radius:999px;
+                                 margin-right:6px; letter-spacing:0.02em;">
+                        问题
+                    </span>
+                    {sp.problem_statement_zh}
+                </div>"""
+
+    methods_html = ""
+    if sp.methods_zh:
+        methods_html = f"""
+                <div style="margin-top:8px; padding:8px 12px;
+                            background:#faf5ff; border-left:3px solid #a855f7;
+                            border-radius:4px; color:#581c87; font-size:13px;
+                            line-height:1.55;">
+                    <span style="display:inline-block; background:#a855f7;
+                                 color:white; font-weight:700; font-size:11px;
+                                 padding:2px 8px; border-radius:999px;
+                                 margin-right:6px; letter-spacing:0.02em;">
+                        方法
+                    </span>
+                    {sp.methods_zh}
+                </div>"""
+
+    return f"""
         <tr>
-            <td style="text-align:center; padding:12px 8px; border-bottom:1px solid #eee;">
-                <strong>{i}</strong>
+            <td style="text-align:center; padding:12px 8px; border-bottom:1px solid #eee;
+                       {style["opacity"]}">
+                <strong>{index}</strong>
             </td>
-            <td style="padding:12px 8px; border-bottom:1px solid #eee;">
+            <td style="{cell_inline_style}">
                 <a href="{sp.paper.abs_url}"
                    style="color:#1a73e8; text-decoration:none; font-weight:bold;">
                     {sp.paper.title}
@@ -76,8 +189,8 @@ def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> s
                 </div>
                 <div style="color:#333; font-size:13px; margin-top:6px;">
                     {sp.summary_zh}
-                </div>
-                <div style="margin-top:6px;">
+                </div>{contributions_html}{problem_html}{methods_html}
+                <div style="margin-top:8px;">
                     <span style="background:#e8f5e9; color:#2e7d32; padding:2px 8px;
                                  border-radius:12px; font-size:12px;">
                         相关度 {sp.relevance_score:.1f}
@@ -89,7 +202,43 @@ def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> s
                     {tag_badges}
                 </div>
             </td>
-        </tr>""")
+        </tr>"""
+
+
+def _tier_section(tier: str, papers: list[ScoredPaper], start_index: int) -> str:
+    """Render one tier section: header row + a row per paper in it."""
+    style = _TIER_STYLE[tier]
+    label = TIER_LABELS_ZH[tier]
+    header = f"""
+        <tr>
+            <td colspan="2" style="padding:16px 8px 6px;
+                                   border-bottom:2px solid #ddd;">
+                <span style="background:{style["badge_bg"]}; color:{style["badge_fg"]};
+                             padding:4px 12px; border-radius:999px; font-weight:600;
+                             font-size:13px; letter-spacing:0.02em;">
+                    {label}
+                </span>
+                <span style="color:#888; font-size:12px; margin-left:8px;">
+                    {len(papers)} 篇
+                </span>
+            </td>
+        </tr>"""
+    rows = [_paper_row(sp, start_index + i) for i, sp in enumerate(papers)]
+    return header + "".join(rows)
+
+
+def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> str:
+    """Format papers as HTML email grouped by impact tier."""
+    if not papers:
+        return "<p>今日无符合条件的高质量 AI Infra 论文。</p>"
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    sections: list[str] = []
+    idx = 1
+    for tier, tier_papers in _group_papers_by_tier(papers):
+        sections.append(_tier_section(tier, tier_papers, idx))
+        idx += len(tier_papers)
 
     unsubscribe_html = ""
     if unsubscribe_url:
@@ -108,7 +257,7 @@ def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> s
     </h1>
     <p style="color:#666;">📅 {date_str} | 共筛选出 <strong>{len(papers)}</strong> 篇高质量论文</p>
     <table style="width:100%; border-collapse:collapse;">
-        {"".join(rows)}
+        {"".join(sections)}
     </table>
     <p style="color:#999; font-size:12px; margin-top:20px; text-align:center;">
         由 Paper Agent 自动生成推送

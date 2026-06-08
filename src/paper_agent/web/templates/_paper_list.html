@@ -8,10 +8,15 @@
 {% if papers %}
 <div class="paper-list">
     {% for sp in papers %}
-    <article class="paper-card">
-        <h3 class="paper-title">
-            <a href="{{ sp.paper.abs_url }}" target="_blank" rel="noopener">{{ sp.paper.title }}</a>
-        </h3>
+    <article class="paper-card tier-{{ sp.impact_tier or 'solid' }}">
+        <div class="paper-card-header">
+            <h3 class="paper-title">
+                <a href="{{ sp.paper.abs_url }}" target="_blank" rel="noopener">{{ sp.paper.title }}</a>
+            </h3>
+            {% set tier = sp.impact_tier or 'solid' %}
+            {% set tier_labels = {'breakthrough': '重磅突破', 'solid': '稳健工作', 'incremental': '渐进改进'} %}
+            <span class="tier-badge tier-badge-{{ tier }}">{{ tier_labels[tier] }}</span>
+        </div>
         <p class="paper-authors">
             {% if sp.paper.authors|length <= 3 %}
                 {{ sp.paper.authors | join(', ') }}
@@ -20,6 +25,22 @@
             {% endif %}
         </p>
         <p class="paper-summary">{{ sp.summary_zh }}</p>
+        {% if sp.key_contributions %}
+        <div class="paper-contributions">
+            <span class="paper-section-label">关键贡献</span>
+            <ul>
+                {% for c in sp.key_contributions %}
+                <li>{{ c }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+        {% if sp.problem_statement_zh %}
+        <p class="paper-problem"><span class="paper-section-label">问题</span>{{ sp.problem_statement_zh }}</p>
+        {% endif %}
+        {% if sp.methods_zh %}
+        <p class="paper-methods"><span class="paper-section-label">方法</span>{{ sp.methods_zh }}</p>
+        {% endif %}
         <div class="paper-meta">
             <span class="paper-tags">
                 {% if sp.sub_domain_tags %}

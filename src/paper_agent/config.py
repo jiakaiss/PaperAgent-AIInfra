@@ -83,6 +83,17 @@ class FetchConfig(BaseModel):
     )
     max_results: int = 200
     days_back: int = 2
+    # Quality floor strategy (dual-track fetch). "per_keyword_cap" enables a
+    # per-keyword budget and a recency-based cross-list pass; "none" preserves
+    # the legacy single-pass behavior.
+    quality_floor_strategy: Literal["none", "per_keyword_cap"] = "none"
+    # Minimum results per keyword when quality_floor_strategy is
+    # "per_keyword_cap". Prevents a keyword with 0 results from inflating
+    # another keyword's share.
+    min_per_keyword: int = 10
+    # arXiv categories for the recency-based cross-list pass (track 2 of the
+    # dual-track fetch). When empty, the cross-list pass is skipped.
+    cross_list_categories: list[str] = Field(default_factory=list)
 
 
 class PromptsConfig(BaseModel):
@@ -221,6 +232,11 @@ class UserThresholdsConfig(BaseModel):
     min_quality: float = 5.0
     top_n: int = 200
     per_sub_domain_top_n: int = 20
+    # Minimum impact tier to include in this user's digest. "solid" (default)
+    # excludes incremental papers — same default behavior as the web UI front
+    # page. Set to "incremental" to include everything, "breakthrough" to
+    # restrict to top-tier papers only.
+    min_tier: Literal["breakthrough", "solid", "incremental"] = "solid"
 
     @model_validator(mode="after")
     def _check_positive_limits(self) -> UserThresholdsConfig:
@@ -398,6 +414,7 @@ class SubscriptionRequest(BaseModel):
     def validate_email_format(cls, email: str) -> str:
         """Validate email format using a simple regex pattern."""
         import re
+
         pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
         if not re.match(pattern, email):
             raise ValueError("Invalid email format")

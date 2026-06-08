@@ -160,6 +160,24 @@ class Paper:
         return self.categories[0] if self.categories else "unknown"
 
 
+# Impact tier taxonomy: three coarse levels the scorer assigns per paper.
+# Ordering reflects descending priority (breakthrough > solid > incremental).
+IMPACT_TIERS: tuple[str, ...] = ("breakthrough", "solid", "incremental")
+TIER_RANK: dict[str, int] = {tier: i for i, tier in enumerate(IMPACT_TIERS)}
+DEFAULT_TIER: str = "solid"
+
+
+def tier_rank(impact_tier: str | None) -> int:
+    """Return the sort rank of an impact tier (lower = higher priority).
+
+    Unknown or empty values fall back to ``DEFAULT_TIER`` ("solid"). Used both
+    for sorting papers and for per-user min-tier comparisons.
+    """
+    if not impact_tier:
+        return TIER_RANK[DEFAULT_TIER]
+    return TIER_RANK.get(impact_tier, TIER_RANK[DEFAULT_TIER])
+
+
 @dataclass(frozen=True)
 class ScoredPaper:
     """A paper with LLM-generated scores and summary."""
@@ -169,6 +187,12 @@ class ScoredPaper:
     quality_score: float  # 0-10, overall quality/impact
     summary_zh: str  # One-line Chinese summary
     sub_domain_tags: tuple[str, ...] = ()  # 1-3 sub-domain tags
+    # Structured insights — added in enhance-paper-display-and-retrieval.
+    # Legacy rows scored before these fields existed read back as defaults.
+    key_contributions: tuple[str, ...] = ()  # 0-3 short bullets
+    problem_statement_zh: str = ""  # 1-2 sentences, may be empty for legacy rows
+    methods_zh: str = ""  # 1-2 sentences, may be empty for legacy rows
+    impact_tier: str = DEFAULT_TIER  # one of IMPACT_TIERS
 
     @property
     def total_score(self) -> float:
@@ -216,16 +240,23 @@ def sort_by_score(
     papers: list[ScoredPaper],
     weights: ScoreWeights | None = None,
 ) -> list[ScoredPaper]:
-    """Sort papers by total score, highest first.
+    """Sort papers by impact tier first, then total score (highest first).
 
-    When ``weights`` is provided, uses ``compute_total_score`` with those
-    weights. Otherwise falls back to ``ScoredPaper.total_score`` (default
+    Tier ordering is ``breakthrough`` → ``solid`` → ``incremental``; within a
+    tier, papers are ordered by descending total score. When ``weights`` is
+    provided, the secondary key uses ``compute_total_score`` with those
+    weights. Otherwise it falls back to ``ScoredPaper.total_score`` (default
     0.6/0.4 weighting) for backward compatibility.
+
+    Papers with an unknown ``impact_tier`` value are treated as ``"solid"``.
     """
     if weights is None:
-        return sorted(papers, key=lambda p: p.total_score, reverse=True)
+        score_of = lambda p: p.total_score  # noqa: E731
+    else:
+        score_of = lambda p: compute_total_score(p, weights)  # noqa: E731
+    # Sort key: (tier_rank ASC, -score) — Python sorts ascending, so negate the
+    # score to get descending order within a tier.
     return sorted(
         papers,
-        key=lambda p: compute_total_score(p, weights),
-        reverse=True,
+        key=lambda p: (tier_rank(p.impact_tier), -score_of(p)),
     )

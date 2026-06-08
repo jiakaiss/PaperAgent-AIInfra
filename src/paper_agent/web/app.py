@@ -32,13 +32,17 @@ def create_app(config: AppConfig) -> FastAPI:
 
     # Jinja2 templates
     templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
-    # Cache-busting version for /static/style.css — derived from file mtime so
-    # any CSS edit auto-invalidates the browser cache without manual refresh.
-    try:
-        style_version = str(int((static_dir / "style.css").stat().st_mtime))
-    except OSError:
-        style_version = "0"
-    templates.env.globals["style_version"] = style_version
+    # Cache-busting versions for /static/* files — derived from file mtime so
+    # any edit auto-invalidates the browser cache without manual refresh.
+    def _file_version(filename: str) -> str:
+        try:
+            return str(int((static_dir / filename).stat().st_mtime))
+        except OSError:
+            return "0"
+
+    templates.env.globals["style_version"] = _file_version("style.css")
+    templates.env.globals["prefs_version"] = _file_version("preferences.js")
+    templates.env.globals["app_version"] = _file_version("app.js")
     app.state.templates = templates
 
     # Register route handlers
