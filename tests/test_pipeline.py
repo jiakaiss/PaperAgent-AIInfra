@@ -436,10 +436,12 @@ def test_pipeline_cached_digest_uses_cache_without_fetching(mock_scorer_cls, moc
             storage=StorageConfig(db_path=db_path),
         )
         pipeline = Pipeline(config)
-        pipeline.db.cache_papers([
-            _make_scored_paper("001", tags=("quantization",)),
-            _make_scored_paper("002", tags=("moe",)),
-        ])
+        pipeline.db.cache_papers(
+            [
+                _make_scored_paper("001", tags=("quantization",)),
+                _make_scored_paper("002", tags=("moe",)),
+            ]
+        )
 
         results = pipeline.run_cached_for_user("alice", dry_run=True)
 
@@ -509,10 +511,12 @@ def test_pipeline_cached_digest_uses_cache_for_all_users(mock_scorer_cls, mock_f
             storage=StorageConfig(db_path=db_path),
         )
         pipeline = Pipeline(config)
-        pipeline.db.cache_papers([
-            _make_scored_paper("001", tags=("quantization",)),
-            _make_scored_paper("002", tags=("moe",)),
-        ])
+        pipeline.db.cache_papers(
+            [
+                _make_scored_paper("001", tags=("quantization",)),
+                _make_scored_paper("002", tags=("moe",)),
+            ]
+        )
 
         results = pipeline.run_cached_digest(dry_run=True)
 
@@ -532,19 +536,28 @@ def test_per_sub_domain_top_n_split_and_dedup(mock_scorer_cls, mock_fetcher_cls)
     scored = []
     # 30 quant-only papers, scores 9.0 → 6.1 (descending)
     for i in range(30):
-        scored.append(_make_scored_paper(
-            f"q{i:03d}", relevance=9.0 - i * 0.1, quality=7.0, tags=("quantization",)
-        ))
+        scored.append(
+            _make_scored_paper(
+                f"q{i:03d}", relevance=9.0 - i * 0.1, quality=7.0, tags=("quantization",)
+            )
+        )
     # 25 distil-only papers
     for i in range(25):
-        scored.append(_make_scored_paper(
-            f"d{i:03d}", relevance=9.0 - i * 0.1, quality=7.0, tags=("distillation",)
-        ))
+        scored.append(
+            _make_scored_paper(
+                f"d{i:03d}", relevance=9.0 - i * 0.1, quality=7.0, tags=("distillation",)
+            )
+        )
     # 5 dual-tag papers (both quant and distil)
     for i in range(5):
-        scored.append(_make_scored_paper(
-            f"dual{i}", relevance=8.5, quality=7.5, tags=("quantization", "distillation"),
-        ))
+        scored.append(
+            _make_scored_paper(
+                f"dual{i}",
+                relevance=8.5,
+                quality=7.5,
+                tags=("quantization", "distillation"),
+            )
+        )
     mock_scorer_cls.return_value.score.return_value = scored
     mock_fetcher_cls.return_value.fetch.return_value = [sp.paper for sp in scored]
 
@@ -554,14 +567,18 @@ def test_per_sub_domain_top_n_split_and_dedup(mock_scorer_cls, mock_fetcher_cls)
         config = AppConfig(
             fetch=FetchConfig(max_results=100, days_back=3),
             scoring=ScoringConfig(batch_size=5),
-            users=[UserConfig(
-                user_id="alice",
-                subscriptions=SubscriptionConfig(sub_domains=["quantization", "distillation"]),
-                thresholds=UserThresholdsConfig(
-                    min_relevance=6.0, min_quality=5.0,
-                    top_n=200, per_sub_domain_top_n=10,
-                ),
-            )],
+            users=[
+                UserConfig(
+                    user_id="alice",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization", "distillation"]),
+                    thresholds=UserThresholdsConfig(
+                        min_relevance=6.0,
+                        min_quality=5.0,
+                        top_n=200,
+                        per_sub_domain_top_n=10,
+                    ),
+                )
+            ],
             schedule=ScheduleConfig(enabled=False),
             storage=StorageConfig(db_path=db_path),
         )
@@ -581,14 +598,22 @@ def test_per_sub_domain_top_n_split_and_dedup(mock_scorer_cls, mock_fetcher_cls)
 @patch("paper_agent.pipeline.ClaudeScorer")
 def test_per_sub_domain_respects_overall_cap(mock_scorer_cls, mock_fetcher_cls):
     """top_n caps the dedup'd union even when per-domain buckets sum higher."""
-    sub_domains = ["quantization", "distillation", "pruning", "sparsity", "serving",
-                   "kv_cache", "moe", "compiler", "scheduling", "parallelism"]
+    sub_domains = [
+        "quantization",
+        "distillation",
+        "pruning",
+        "sparsity",
+        "serving",
+        "kv_cache",
+        "moe",
+        "compiler",
+        "scheduling",
+        "parallelism",
+    ]
     scored = []
     for tag in sub_domains:
         for i in range(5):
-            scored.append(_make_scored_paper(
-                f"{tag}{i}", relevance=8.0, quality=7.0, tags=(tag,)
-            ))
+            scored.append(_make_scored_paper(f"{tag}{i}", relevance=8.0, quality=7.0, tags=(tag,)))
     mock_scorer_cls.return_value.score.return_value = scored
     mock_fetcher_cls.return_value.fetch.return_value = [sp.paper for sp in scored]
 
@@ -598,14 +623,18 @@ def test_per_sub_domain_respects_overall_cap(mock_scorer_cls, mock_fetcher_cls):
         config = AppConfig(
             fetch=FetchConfig(max_results=100, days_back=3),
             scoring=ScoringConfig(batch_size=5),
-            users=[UserConfig(
-                user_id="alice",
-                subscriptions=SubscriptionConfig(sub_domains=sub_domains),
-                thresholds=UserThresholdsConfig(
-                    min_relevance=6.0, min_quality=5.0,
-                    top_n=15, per_sub_domain_top_n=20,
-                ),
-            )],
+            users=[
+                UserConfig(
+                    user_id="alice",
+                    subscriptions=SubscriptionConfig(sub_domains=sub_domains),
+                    thresholds=UserThresholdsConfig(
+                        min_relevance=6.0,
+                        min_quality=5.0,
+                        top_n=15,
+                        per_sub_domain_top_n=20,
+                    ),
+                )
+            ],
             schedule=ScheduleConfig(enabled=False),
             storage=StorageConfig(db_path=db_path),
         )
@@ -622,8 +651,9 @@ def test_per_sub_domain_respects_overall_cap(mock_scorer_cls, mock_fetcher_cls):
 def test_all_subscription_ignores_per_domain_limit(mock_scorer_cls, mock_fetcher_cls):
     """Users subscribed to 'all' skip per-domain bucketing, get top_n directly."""
     scored = [
-        _make_scored_paper(f"p{i:03d}", relevance=9.0 - i * 0.05, quality=7.0,
-                            tags=("quantization",))
+        _make_scored_paper(
+            f"p{i:03d}", relevance=9.0 - i * 0.05, quality=7.0, tags=("quantization",)
+        )
         for i in range(30)
     ]
     mock_scorer_cls.return_value.score.return_value = scored
@@ -635,19 +665,211 @@ def test_all_subscription_ignores_per_domain_limit(mock_scorer_cls, mock_fetcher
         config = AppConfig(
             fetch=FetchConfig(max_results=100, days_back=3),
             scoring=ScoringConfig(batch_size=5),
-            users=[UserConfig(
-                user_id="team",
-                subscriptions=SubscriptionConfig(sub_domains=["all"]),
-                thresholds=UserThresholdsConfig(
-                    min_relevance=6.0, min_quality=5.0,
-                    top_n=12, per_sub_domain_top_n=3,  # would only give 3 if buckets applied
-                ),
-            )],
+            users=[
+                UserConfig(
+                    user_id="team",
+                    subscriptions=SubscriptionConfig(sub_domains=["all"]),
+                    thresholds=UserThresholdsConfig(
+                        min_relevance=6.0,
+                        min_quality=5.0,
+                        top_n=12,
+                        per_sub_domain_top_n=3,  # would only give 3 if buckets applied
+                    ),
+                )
+            ],
             schedule=ScheduleConfig(enabled=False),
             storage=StorageConfig(db_path=db_path),
         )
         results = Pipeline(config).run(dry_run=True)
         # "all" bypasses per-domain; should get top_n=12 (not 3 from per_sub_domain_top_n)
         assert len(results["team"]) == 12
+    finally:
+        os.unlink(db_path)
+
+
+# ─── min_tier filtering ───
+
+
+def _make_tiered_paper(
+    arxiv_id: str,
+    impact_tier: str = "solid",
+    tags: tuple = ("quantization",),
+    relevance: float = 8.0,
+    quality: float = 7.0,
+) -> ScoredPaper:
+    return ScoredPaper(
+        paper=_make_paper(arxiv_id),
+        relevance_score=relevance,
+        quality_score=quality,
+        summary_zh="测试",
+        sub_domain_tags=tags,
+        impact_tier=impact_tier,
+    )
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_min_tier_breakthrough_only(mock_scorer_cls, mock_fetcher_cls):
+    """User with min_tier='breakthrough' receives only breakthrough papers."""
+    mock_fetcher = MagicMock()
+    mock_fetcher.fetch.return_value = [_make_paper(f"{i:03d}") for i in range(3)]
+    mock_fetcher_cls.return_value = mock_fetcher
+
+    mock_scorer = MagicMock()
+    mock_scorer.score.return_value = [
+        _make_tiered_paper("000", impact_tier="breakthrough"),
+        _make_tiered_paper("001", impact_tier="solid"),
+        _make_tiered_paper("002", impact_tier="incremental"),
+    ]
+    mock_scorer_cls.return_value = mock_scorer
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[
+                UserConfig(
+                    user_id="picky",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(
+                        min_relevance=6.0,
+                        min_quality=5.0,
+                        top_n=10,
+                        min_tier="breakthrough",
+                    ),
+                ),
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        results = Pipeline(config).run(dry_run=True)
+        assert {sp.paper.arxiv_id for sp in results["picky"]} == {"000"}
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_default_min_tier_excludes_incremental(mock_scorer_cls, mock_fetcher_cls):
+    """Default min_tier='solid' excludes incremental papers."""
+    mock_fetcher = MagicMock()
+    mock_fetcher.fetch.return_value = [_make_paper(f"{i:03d}") for i in range(3)]
+    mock_fetcher_cls.return_value = mock_fetcher
+
+    mock_scorer = MagicMock()
+    mock_scorer.score.return_value = [
+        _make_tiered_paper("000", impact_tier="breakthrough"),
+        _make_tiered_paper("001", impact_tier="solid"),
+        _make_tiered_paper("002", impact_tier="incremental"),
+    ]
+    mock_scorer_cls.return_value = mock_scorer
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        # No min_tier set → defaults to "solid"
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[
+                UserConfig(
+                    user_id="default-user",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(top_n=10),
+                ),
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        results = Pipeline(config).run(dry_run=True)
+        ids = {sp.paper.arxiv_id for sp in results["default-user"]}
+        assert ids == {"000", "001"}
+        assert "002" not in ids  # incremental excluded
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_min_tier_incremental_includes_all(mock_scorer_cls, mock_fetcher_cls):
+    """User with min_tier='incremental' gets every tier."""
+    mock_fetcher = MagicMock()
+    mock_fetcher.fetch.return_value = [_make_paper(f"{i:03d}") for i in range(3)]
+    mock_fetcher_cls.return_value = mock_fetcher
+
+    mock_scorer = MagicMock()
+    mock_scorer.score.return_value = [
+        _make_tiered_paper("000", impact_tier="breakthrough"),
+        _make_tiered_paper("001", impact_tier="solid"),
+        _make_tiered_paper("002", impact_tier="incremental"),
+    ]
+    mock_scorer_cls.return_value = mock_scorer
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[
+                UserConfig(
+                    user_id="completionist",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(top_n=10, min_tier="incremental"),
+                ),
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        results = Pipeline(config).run(dry_run=True)
+        assert {sp.paper.arxiv_id for sp in results["completionist"]} == {"000", "001", "002"}
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_min_tier_sort_order_is_tier_first(mock_scorer_cls, mock_fetcher_cls):
+    """Within a user's digest, breakthrough sorts before higher-scoring solid."""
+    mock_fetcher = MagicMock()
+    mock_fetcher.fetch.return_value = [_make_paper(f"{i:03d}") for i in range(2)]
+    mock_fetcher_cls.return_value = mock_fetcher
+
+    mock_scorer = MagicMock()
+    mock_scorer.score.return_value = [
+        # solid paper with a higher score
+        _make_tiered_paper("001", impact_tier="solid", relevance=9.5, quality=9.5),
+        # breakthrough paper with a lower score
+        _make_tiered_paper("000", impact_tier="breakthrough", relevance=6.0, quality=6.0),
+    ]
+    mock_scorer_cls.return_value = mock_scorer
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[
+                UserConfig(
+                    user_id="reader",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(top_n=10, min_tier="solid"),
+                ),
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        results = Pipeline(config).run(dry_run=True)
+        ordered_ids = [sp.paper.arxiv_id for sp in results["reader"]]
+        # breakthrough first, despite lower raw score
+        assert ordered_ids[0] == "000"
+        assert ordered_ids[1] == "001"
     finally:
         os.unlink(db_path)
