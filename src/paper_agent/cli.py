@@ -336,5 +336,91 @@ def init(output: str):
     click.echo("Edit the file to configure users, subscriptions, and notification channels.")
 
 
+@cli.command()
+@click.option("--config", "-c", default="config.yaml", help="Config file path")
+@click.option(
+    "--missing-fields",
+    is_flag=True,
+    help="Re-score papers that lack structured-insight fields",
+)
+def rescore(config: str, missing_fields: bool):
+    """Re-score cached papers whose structured-insight fields are missing.
+
+    Only useful after upgrading from a version before the
+    ``key_contributions`` / ``impact_tier`` / ``problem_statement_zh`` /
+    ``methods_zh`` columns were added. Each batch is written in its own
+    transaction so interruption is safe.
+    """
+    if not missing_fields:
+        click.echo("Error: Specify --missing-fields to re-score legacy papers.", err=True)
+        sys.exit(1)
+
+    from paper_agent.config import load_config
+    from paper_agent.scorer.claude_scorer import ClaudeScorer
+    from paper_agent.storage.database import PaperDatabase
+
+    try:
+        cfg = load_config(config)
+    except FileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    setup_logging(cfg.logging.level, cfg.logging.file)
+
+    db = PaperDatabase(cfg.storage.db_path)
+    total = db.count_papers_missing_insights()
+    if total == 0:
+        click.echo("✅ No papers with missing fields found. Nothing to do.")
+        return
+
+    scorer = ClaudeScorer(config=cfg.scoring)
+    processed = 0
+    batch_size = cfg.scoring.batch_size
+
+    click.echo(f"Found {total} papers with missing structured-insight fields.")
+    click.echo(f"Processing in batches of {batch_size}...")
+
+    while True:
+        # Always query offset=0 — each successful batch writes the new fields
+        # back, so the "missing" set shrinks naturally. Using a non-zero offset
+        # would skip rows because the rows we just fixed are no longer in the
+        # result set.
+        batch = db.get_papers_missing_insights(limit=batch_size, offset=0)
+        if not batch:
+            break
+
+        papers_to_score = [sp.paper for sp in batch]
+        click.echo(f"  Batch {processed // batch_size + 1}: {len(papers_to_score)} papers...")
+
+        # Score + write in a single try block. ANY exception here (including
+        # the API call, the DB write, or a downstream echo) means we don't
+        # know if persistence succeeded — bail out so the operator can rerun
+        # and resume from a clean checkpoint instead of silently skipping.
+        try:
+            rescored = scorer.score(papers_to_score)
+            db.cache_papers(rescored)
+        except Exception as e:
+            # ASCII-only message: Windows GBK console can't print emoji.
+            click.echo(f"  [FAIL] Batch failed: {e}", err=True)
+            click.echo("  Stopping; rerun the command to resume.", err=True)
+            sys.exit(1)
+
+        # If the scorer returned fewer rows than we sent (e.g. the model
+        # skipped some), those rows stay NULL and we'd loop forever. Bail
+        # out so the operator can investigate rather than spinning.
+        if not rescored:
+            click.echo(
+                f"  [FAIL] Batch returned 0 scored papers ({len(papers_to_score)} sent). "
+                "Stopping; check scorer logs.",
+                err=True,
+            )
+            sys.exit(1)
+
+        processed += len(rescored)
+        click.echo(f"  [OK] Saved {len(rescored)} papers (total {processed}/{total})")
+
+    click.echo(f"\nDone. Processed {processed}/{total} papers.")
+
+
 if __name__ == "__main__":
     cli()
