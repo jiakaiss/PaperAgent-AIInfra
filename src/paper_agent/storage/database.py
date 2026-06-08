@@ -9,7 +9,38 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from paper_agent.models import Paper, ScoredPaper
+from paper_agent.models import DEFAULT_TIER, IMPACT_TIERS, Paper, ScoredPaper
+
+# Schema additions for the enhance-paper-display-and-retrieval change.
+# Listed centrally so _ensure_papers_columns and write/read paths stay in sync.
+_PAPERS_NEW_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("key_contributions", "TEXT"),
+    ("problem_statement_zh", "TEXT"),
+    ("methods_zh", "TEXT"),
+    ("impact_tier", "TEXT"),
+)
+
+# SQL fragment that orders papers by impact tier (breakthrough < solid <
+# incremental) and then by descending weighted score. NULL / unknown tier is
+# treated as 'solid' to keep legacy rows visible.
+_TIER_ORDER_SQL = (
+    "CASE COALESCE(impact_tier, 'solid') "
+    "WHEN 'breakthrough' THEN 0 "
+    "WHEN 'solid' THEN 1 "
+    "WHEN 'incremental' THEN 2 "
+    "ELSE 1 END ASC, "
+    "(relevance_score * 0.6 + quality_score * 0.4) DESC"
+)
+
+
+def _row_get(row: sqlite3.Row, key: str) -> str | None:
+    """Safely access a column that may not exist in the row.
+
+    Uses ``keys()`` introspection so this works even with ``SELECT *`` from
+    a table that hasn't been migrated yet (e.g. in unit tests constructing
+    ad-hoc rows). Returns ``None`` when the column is missing.
+    """
+    return row[key] if key in row.keys() else None
 
 
 class PaperDatabase:
@@ -57,6 +88,7 @@ class PaperDatabase:
                     scored_at TEXT NOT NULL
                 )
             """)
+            self._ensure_papers_columns(conn)
 
             # Per-user delivery tracking
             conn.execute("""
@@ -85,6 +117,19 @@ class PaperDatabase:
             """)
             self._ensure_subscription_columns(conn)
 
+    def _ensure_papers_columns(self, conn: sqlite3.Connection) -> None:
+        """Apply idempotent migrations for the structured-insights columns.
+
+        Each ALTER TABLE is independent; SQLite raises OperationalError when a
+        column already exists, which we swallow so repeat startup is a no-op.
+        """
+        rows = conn.execute("PRAGMA table_info(papers)").fetchall()
+        existing = {row["name"] for row in rows}
+        for name, col_type in _PAPERS_NEW_COLUMNS:
+            if name in existing:
+                continue
+            conn.execute(f"ALTER TABLE papers ADD COLUMN {name} {col_type}")
+
     def _ensure_subscription_columns(self, conn: sqlite3.Connection) -> None:
         """Apply idempotent migrations for subscription metadata columns."""
         rows = conn.execute("PRAGMA table_info(subscriptions)").fetchall()
@@ -111,6 +156,35 @@ class PaperDatabase:
             cached_ids = {row["arxiv_id"] for row in rows}
             return [aid for aid in arxiv_ids if aid not in cached_ids]
 
+    def get_papers_missing_insights(
+        self,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[ScoredPaper]:
+        """Return cached papers whose ``impact_tier`` or ``key_contributions`` is NULL.
+
+        Used by ``paper-agent rescore --missing-fields`` to find legacy papers
+        scored before the structured-insights columns were added. Paginated so
+        the backfill can be interrupted and resumed.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM papers
+                   WHERE impact_tier IS NULL OR key_contributions IS NULL
+                   LIMIT ? OFFSET ?""",
+                (limit, offset),
+            ).fetchall()
+        return [self._row_to_scored_paper(r) for r in rows]
+
+    def count_papers_missing_insights(self) -> int:
+        """Count how many cached papers lack the structured-insight fields."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT COUNT(*) as cnt FROM papers
+                   WHERE impact_tier IS NULL OR key_contributions IS NULL"""
+            ).fetchone()
+            return row["cnt"]
+
     def cache_papers(self, papers: list[ScoredPaper]) -> None:
         """Store scored papers in the cache (upsert)."""
         if not papers:
@@ -123,8 +197,9 @@ class PaperDatabase:
                     INSERT OR REPLACE INTO papers
                     (arxiv_id, title, authors, abstract, published, categories,
                      pdf_url, abs_url, relevance_score, quality_score, summary_zh,
-                     sub_domain_tags, scored_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     sub_domain_tags, scored_at,
+                     key_contributions, problem_statement_zh, methods_zh, impact_tier)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         sp.paper.arxiv_id,
@@ -140,6 +215,10 @@ class PaperDatabase:
                         sp.summary_zh,
                         json.dumps(list(sp.sub_domain_tags)),
                         now,
+                        json.dumps(list(sp.key_contributions)),
+                        sp.problem_statement_zh,
+                        sp.methods_zh,
+                        sp.impact_tier,
                     ),
                 )
 
@@ -191,6 +270,7 @@ class PaperDatabase:
         search: str | None = None,
         published_after: str | None = None,
         min_quality: float | None = None,
+        tiers: set[str] | None = None,
     ) -> tuple[str, list[str | float]]:
         """Build a WHERE clause and parameter list for paper filtering.
 
@@ -219,6 +299,15 @@ class PaperDatabase:
             conditions.append("title LIKE ?")
             params.append(f"%{search}%")
 
+        if tiers:
+            # Coerce NULL / unknown impact_tier to 'solid' so legacy rows match
+            # naturally when 'solid' is in the requested set.
+            valid_tiers = [t for t in tiers if t in IMPACT_TIERS]
+            if valid_tiers:
+                placeholders = ",".join("?" * len(valid_tiers))
+                conditions.append(f"COALESCE(impact_tier, 'solid') IN ({placeholders})")
+                params.extend(valid_tiers)
+
         if conditions:
             return " WHERE " + " AND ".join(conditions), params
         return "", params
@@ -236,12 +325,21 @@ class PaperDatabase:
             pdf_url=row["pdf_url"],
             abs_url=row["abs_url"],
         )
+        # The structured-insight columns were added later; legacy rows have
+        # NULL values that we coerce to safe defaults. _row_get tolerates rows
+        # produced by old SELECT * statements that don't include them at all.
+        contribs_raw = _row_get(row, "key_contributions")
+        contribs = tuple(json.loads(contribs_raw)) if contribs_raw else ()
         return ScoredPaper(
             paper=paper,
             relevance_score=row["relevance_score"],
             quality_score=row["quality_score"],
             summary_zh=row["summary_zh"],
             sub_domain_tags=tuple(tags),
+            key_contributions=contribs,
+            problem_statement_zh=_row_get(row, "problem_statement_zh") or "",
+            methods_zh=_row_get(row, "methods_zh") or "",
+            impact_tier=_row_get(row, "impact_tier") or DEFAULT_TIER,
         )
 
     def list_papers(
@@ -250,16 +348,20 @@ class PaperDatabase:
         search: str | None = None,
         published_after: str | None = None,
         min_quality: float | None = None,
+        tiers: set[str] | None = None,
         limit: int = 25,
         offset: int = 0,
     ) -> list[ScoredPaper]:
-        """Return scored papers matching the given filters, sorted by total score.
+        """Return scored papers matching the given filters, sorted by tier-then-score.
 
-        Papers are sorted highest-score-first. ``limit`` and ``offset`` control
-        pagination.
+        Ordering: impact_tier ASC (breakthrough → solid → incremental, with
+        NULL / unknown coerced to ``solid``), then weighted total score DESC.
+        ``limit`` and ``offset`` control pagination.
         """
-        where, params = self._build_filter_clause(sub_domains, search, published_after, min_quality)
-        order = " ORDER BY (relevance_score * 0.6 + quality_score * 0.4) DESC"
+        where, params = self._build_filter_clause(
+            sub_domains, search, published_after, min_quality, tiers
+        )
+        order = f" ORDER BY {_TIER_ORDER_SQL}"
         paging = " LIMIT ? OFFSET ?"
         with self._connect() as conn:
             rows = conn.execute(
@@ -274,9 +376,12 @@ class PaperDatabase:
         search: str | None = None,
         published_after: str | None = None,
         min_quality: float | None = None,
+        tiers: set[str] | None = None,
     ) -> int:
         """Return the number of scored papers matching the given filters."""
-        where, params = self._build_filter_clause(sub_domains, search, published_after, min_quality)
+        where, params = self._build_filter_clause(
+            sub_domains, search, published_after, min_quality, tiers
+        )
         with self._connect() as conn:
             row = conn.execute(f"SELECT COUNT(*) as cnt FROM papers{where}", params).fetchone()
             return row["cnt"]
