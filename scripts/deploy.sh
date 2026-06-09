@@ -10,7 +10,9 @@ if [ ! -f .env ]; then
 fi
 
 if [ ! -f deploy/config/config.yaml ]; then
-  echo "Missing deploy/config/config.yaml. Copy deploy/config/config.yaml.example first." >&2
+  echo "Missing deploy/config/config.yaml. Copy config.example.yaml first:" >&2
+  echo "  cp config.example.yaml deploy/config/config.yaml" >&2
+  echo "Then edit it — for Docker, change db_path to /app/data/paper_agent.db and logging.file to /app/logs/paper-agent.log." >&2
   exit 1
 fi
 

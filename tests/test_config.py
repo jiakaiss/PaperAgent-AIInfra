@@ -12,6 +12,7 @@ from paper_agent.config import (
     PromptsConfig,
     ScoringConfig,
     SubscriptionConfig,
+    ThresholdsConfig,
     UserConfig,
     UserThresholdsConfig,
     load_config,
@@ -45,59 +46,71 @@ def test_subscription_all():
     assert sub.sub_domains == ["all"]
 
 
-def test_app_config_with_users():
+def test_thresholds_defaults():
+    """ThresholdsConfig has sensible defaults for all subscription users."""
+    cfg = AppConfig()
+    assert cfg.thresholds.min_relevance == 6.0
+    assert cfg.thresholds.min_quality == 5.0
+    assert cfg.thresholds.top_n == 10
+    assert cfg.thresholds.per_sub_domain_top_n == 20
+    assert cfg.thresholds.min_tier == "solid"
+
+
+def test_thresholds_custom_values():
+    """ThresholdsConfig accepts custom values."""
     cfg = AppConfig(
-        users=[
-            UserConfig(user_id="alice", display_name="Alice"),
-            UserConfig(user_id="bob", display_name="Bob"),
-        ]
-    )
-    assert len(cfg.users) == 2
-    assert cfg.users[0].user_id == "alice"
-    assert cfg.users[1].user_id == "bob"
-
-
-def test_duplicate_user_ids_rejected():
-    with pytest.raises(ValueError, match="Duplicate"):
-        AppConfig(
-            users=[
-                UserConfig(user_id="alice"),
-                UserConfig(user_id="alice"),
-            ]
+        thresholds=ThresholdsConfig(
+            min_relevance=7.5,
+            min_quality=6.0,
+            top_n=20,
+            per_sub_domain_top_n=10,
+            min_tier="breakthrough",
         )
+    )
+    assert cfg.thresholds.min_relevance == 7.5
+    assert cfg.thresholds.min_quality == 6.0
+    assert cfg.thresholds.top_n == 20
+    assert cfg.thresholds.per_sub_domain_top_n == 10
+    assert cfg.thresholds.min_tier == "breakthrough"
 
 
-def test_load_config_from_file():
+def test_thresholds_rejects_non_positive_top_n():
+    with pytest.raises(ValueError, match="top_n"):
+        ThresholdsConfig(top_n=0)
+
+
+def test_thresholds_loads_from_yaml():
     data = {
-        "fetch": {"max_results": 50, "days_back": 3},
-        "scoring": {"model": "claude-sonnet-4-5"},
-        "users": [
-            {
-                "user_id": "test_user",
-                "display_name": "Test",
-                "subscriptions": {"sub_domains": ["quantization"]},
-                "thresholds": {"min_relevance": 8.0},
-            }
-        ],
+        "thresholds": {
+            "min_relevance": 8.0,
+            "min_quality": 7.0,
+            "top_n": 15,
+            "min_tier": "breakthrough",
+        }
     }
-
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         yaml.dump(data, f)
         config_path = f.name
 
     try:
         cfg = load_config(config_path)
-        assert cfg.fetch.max_results == 50
-        assert cfg.fetch.days_back == 3
-        assert cfg.scoring.model == "claude-sonnet-4-5"
-        assert len(cfg.users) == 1
-        assert cfg.users[0].user_id == "test_user"
-        assert cfg.users[0].subscriptions.sub_domains == ["quantization"]
-        assert cfg.users[0].thresholds.min_relevance == 8.0
-        # Defaults should still apply for unspecified fields
-        assert cfg.schedule.cron_hour == 9
+        assert cfg.thresholds.min_relevance == 8.0
+        assert cfg.thresholds.min_quality == 7.0
+        assert cfg.thresholds.top_n == 15
+        assert cfg.thresholds.min_tier == "breakthrough"
     finally:
         os.unlink(config_path)
+
+
+def test_user_notify_config_has_only_email():
+    """UserNotifyConfig should only contain an email field (no wecom/feishu/dingtalk)."""
+    from paper_agent.config import UserNotifyConfig
+
+    cfg = UserNotifyConfig()
+    assert hasattr(cfg, "email")
+    assert not hasattr(cfg, "wecom")
+    assert not hasattr(cfg, "feishu")
+    assert not hasattr(cfg, "dingtalk")
 
 
 def test_env_var_interpolation():

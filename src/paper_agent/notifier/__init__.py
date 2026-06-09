@@ -7,19 +7,13 @@ from typing import Any
 
 from paper_agent.config import UserNotifyConfig
 from paper_agent.notifier.base import Notifier
-from paper_agent.notifier.dingtalk_notifier import DingTalkNotifier
 from paper_agent.notifier.email_notifier import EmailNotifier
-from paper_agent.notifier.feishu_notifier import FeishuNotifier
-from paper_agent.notifier.wecom_notifier import WeComNotifier
 
 logger = logging.getLogger(__name__)
 
 # Registry: name -> (notifier class, config attribute on UserNotifyConfig)
 _REGISTRY: dict[str, tuple[type[Any], str]] = {
     "email": (EmailNotifier, "email"),
-    "wecom": (WeComNotifier, "wecom"),
-    "feishu": (FeishuNotifier, "feishu"),
-    "dingtalk": (DingTalkNotifier, "dingtalk"),
 }
 
 
@@ -47,7 +41,4 @@ __all__ = [
     "create_notifiers_for_user",
     "get_notifier_by_name",
     "EmailNotifier",
-    "WeComNotifier",
-    "FeishuNotifier",
-    "DingTalkNotifier",
 ]

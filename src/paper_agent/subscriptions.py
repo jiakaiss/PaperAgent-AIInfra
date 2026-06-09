@@ -75,14 +75,30 @@ def subscription_to_user_config(
     global_email: EmailNotifierConfig,
     default_top_n: int = 10,
     unsubscribe_url: str = "",
+    thresholds_config: object | None = None,
 ) -> UserConfig:
-    """Convert a subscription record into a runtime UserConfig."""
+    """Convert a subscription record into a runtime UserConfig.
+
+    When *thresholds_config* is provided (a :class:`ThresholdsConfig` instance),
+    its fields are used as the user's thresholds; otherwise only ``top_n`` is
+    set from *default_top_n* and all other thresholds fall back to
+    :class:`UserThresholdsConfig` defaults.
+    """
+    thresholds: dict = {"top_n": default_top_n}
+    if thresholds_config is not None:
+        thresholds = {
+            "min_relevance": thresholds_config.min_relevance,
+            "min_quality": thresholds_config.min_quality,
+            "top_n": thresholds_config.top_n,
+            "per_sub_domain_top_n": thresholds_config.per_sub_domain_top_n,
+            "min_tier": thresholds_config.min_tier,
+        }
     return UserConfig(
         user_id=email,
         display_name=email,
         subscriptions={"sub_domains": list(sub_domains)},
         notify={"email": build_subscription_email_config(email, global_email, unsubscribe_url)},
-        thresholds={"top_n": default_top_n},
+        thresholds=thresholds,
     )
 
 
@@ -129,6 +145,7 @@ def load_subscriptions_into_config(config: AppConfig) -> int:
                 config.email,
                 default_top_n=config.subscriptions.default_top_n,
                 unsubscribe_url=unsubscribe_url,
+                thresholds_config=config.thresholds,
             )
         )
         existing_user_ids.add(email)

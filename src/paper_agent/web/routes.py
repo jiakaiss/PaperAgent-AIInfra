@@ -371,6 +371,7 @@ def subscribe_api(
         config.email,
         default_top_n=config.subscriptions.default_top_n,
         unsubscribe_url=unsubscribe_url,
+        thresholds_config=config.thresholds,
     )
     _upsert_runtime_user(config, user_config)
     action = "Updated" if is_update else "Added"

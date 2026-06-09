@@ -26,8 +26,8 @@ ruff format src/ tests/
 # Run the CLI
 paper-agent --help
 paper-agent run --dry-run -c config.yaml
-paper-agent run --user alice --dry-run -c config.yaml
-paper-agent test --notifier feishu --user alice -c config.yaml
+paper-agent run --user alice@example.com --dry-run -c config.yaml
+paper-agent test --notifier email --user alice@example.com -c config.yaml
 paper-agent daemon -c config.yaml
 paper-agent stats -c config.yaml
 paper-agent web -c config.yaml                     # launch web UI on 127.0.0.1:8000
@@ -44,7 +44,7 @@ On Windows, set `PYTHONIOENCODING=utf-8` before running CLI to avoid GBK encodin
 
 ## Architecture
 
-This is a **multi-user** AI Infra paper recommendation agent that fetches from arXiv, scores with Claude (including sub-domain tags), and pushes personalized digests to different users.
+This is an AI Infra paper recommendation agent that fetches from arXiv, scores with Claude (including sub-domain tags), and delivers personalized digests via email to users who subscribed through the web form. **All users come from the `subscriptions` SQLite table** — there is no `users:` list in `config.yaml`.
 
 ### Pipeline Flow (`pipeline.py`)
 
@@ -55,12 +55,12 @@ The pipeline has two phases:
 Fetch superset → Dedup against papers cache → Score with Claude → Cache results
 ```
 
-**Per-user phase** (runs for each user):
+**Per-user phase** (runs for each subscription user):
 ```
-Filter by tier (min_tier) → Filter by sub_domain tags → Filter by thresholds → Dedup per-user → Notify → mark_sent
+Filter by tier (min_tier) → Filter by sub_domain tags → Filter by thresholds → Dedup per-user → Notify (email) → mark_sent
 ```
 
-The `Pipeline._build_superset_keywords()` method unions all users' subscribed sub-domain keywords with global fetch keywords, so a single arXiv fetch covers everyone's interests.
+The `Pipeline._build_superset_keywords()` method unions global fetch keywords with all sub-domain names, so a single arXiv fetch covers all topics regardless of which users are subscribed to which areas.
 
 ### Dual-Track Retrieval (`fetcher/arxiv_fetcher.py`)
 
@@ -94,11 +94,11 @@ IMPACT_TIERS = ("breakthrough", "solid", "incremental")
 - **`solid`** — well-executed, useful work incrementally advancing a clear baseline (the default; most papers)
 - **`incremental`** — minor variation, narrow scope, or limited evaluation
 
-The tier is judged by the LLM (not derived from numeric scores). `sort_by_score()` sorts by `(tier_rank ASC, total_score DESC)` so a breakthrough paper always outranks higher-scoring solid papers. Web UI excludes `incremental` by default; per-user digests obey `UserThresholdsConfig.min_tier` (default `"solid"`). Helpers: `tier_rank(tier) -> int`, `DEFAULT_TIER = "solid"`.
+The tier is judged by the LLM (not derived from numeric scores). `sort_by_score()` sorts by `(tier_rank ASC, total_score DESC)` so a breakthrough paper always outranks higher-scoring solid papers. Web UI excludes `incremental` by default; per-user digests obey the global `ThresholdsConfig.min_tier` (default `"solid"`, applied uniformly to all subscription users). Helpers: `tier_rank(tier) -> int`, `DEFAULT_TIER = "solid"`.
 
 ### Multi-User Config (`config.py`)
 
-Config structure (no backward compat with single-user format):
+Config structure (users come from `subscriptions` database table, not `config.yaml`):
 ```python
 AppConfig
 ├── FetchConfig       (global: categories, keywords, max_results, days_back,
@@ -107,19 +107,21 @@ AppConfig
 ├── ScoringConfig     (global: model, batch_size, api_key, base_url, max_tokens,
 │                      temperature, tool_choice, abstract_max_length,
 │                      relevance_weight, quality_weight, prompts: PromptsConfig)
-├── users: list[UserConfig]    # ← per-user
+├── EmailNotifierConfig (global: SMTP credentials for all subscription users)
+├── ThresholdsConfig  (global: min_relevance, min_quality, top_n,
+│                      per_sub_domain_top_n, min_tier — shared by all users)
+├── users: list[UserConfig]  # ← populated at runtime from subscriptions table
 │   └── UserConfig
 │       ├── user_id, display_name
 │       ├── SubscriptionConfig (sub_domains: ["all"] or specific list)
-│       ├── UserNotifyConfig   (email, wecom, feishu, dingtalk)
-│       └── UserThresholdsConfig (min_relevance, min_quality, top_n,
-│                                  per_sub_domain_top_n, min_tier)
+│       ├── UserNotifyConfig   (email only)
+│       └── UserThresholdsConfig (inherited from global ThresholdsConfig)
 ├── ScheduleConfig    (global)
 ├── StorageConfig     (global)
 └── LoggingConfig     (global)
 ```
 
-Duplicate `user_id` values are rejected by a Pydantic validator.
+The `users` list is **empty after loading `config.yaml`**; `load_subscriptions_into_config()` populates it from the `subscriptions` table. Duplicate `user_id` values are not a concern because the database `email` column is UNIQUE.
 
 ### Scoring (`scorer/claude_scorer.py`)
 
@@ -135,7 +137,7 @@ Uses Claude's `tool_use` for structured output. The `SCORE_TOOL` schema includes
 
 Papers are scored in batches (default 10). After each batch the scorer logs a `tier distribution: breakthrough=N solid=M incremental=K` line for spot-checking calibration. Bullets exceeding the cap are truncated with a warning; unknown `impact_tier` values fall back to `"solid"` with a warning. After upgrading, fresh scoring runs use roughly ~30% more output tokens per paper due to the new prose fields.
 
-**`relevance_weight` / `quality_weight` interaction with tier**: weights still control how `total_score` is computed within a tier, but tier rank is the primary sort key. So tweaking the weights only changes ordering inside a tier — to elevate a paper *across* tiers you need the LLM to reclassify it (e.g. via a sharper `prompts.system_prompt`).
+**`relevance_weight` / `quality_weight` interaction with tier**: weights still control how `total_score` is computed within a tier, but tier rank is the primary sort key. So tweaking the weights only changes ordering inside a tier — to elevate a paper *across* tiers you need the LLM to reclassify it (e.g. via a sharper `prompts.system_prompt`). Global thresholds in `ThresholdsConfig` determine which papers each subscription user receives.
 
 **Configurable `ScoringConfig` fields** (all optional, with sensible defaults matching prior hardcoded values):
 - `api_key` / `base_url`: LLM API connection. Supports `${ENV_VAR}` interpolation. `api_key=None` falls back to `ANTHROPIC_API_KEY` env var.
@@ -202,16 +204,14 @@ Users can subscribe to paper digests via the `/subscribe` web form. Subscription
 - At startup, `_load_subscriptions_into_config()` loads active subscriptions and creates `UserConfig` objects
 - Each subscription user has `notify.email.enabled=true` and `notify.email.recipients=[email]`
 - SMTP credentials are copied from `config.email` at conversion time (not stored in database)
+- Thresholds are copied from global `config.thresholds` at conversion time
 
-**Important**: Changes to `config.email` in `config.yaml` require app restart to affect existing subscription users. New subscriptions will use the updated config immediately.
+**Important**: Changes to `config.email` or `config.thresholds` in `config.yaml` require app restart to affect existing subscription users. New subscriptions will use the updated config immediately.
 
 ### Notifier Plugins (`notifier/`)
 
-Protocol-based (structural typing). `create_notifiers_for_user(UserNotifyConfig)` builds a notifier list for one user. Each notifier handles platform-specific quirks:
+Protocol-based (structural typing). `create_notifiers_for_user(UserNotifyConfig)` builds a notifier list for one user. Only **Email** notifier is supported:
 - **Email**: SMTP + HTML templates
-- **企业微信**: Markdown, 4096-byte limit → auto-splits
-- **飞书**: Rich text `post` format (structured JSON)
-- **钉钉**: Markdown + HMAC-SHA256 signature
 
 ### Admin Dashboard (`web/admin.py`)
 
@@ -254,14 +254,13 @@ Then `export ADMIN_PASSWORD=$(openssl rand -base64 24)` and restart the web serv
 Required (unless `scoring.api_key` is set in `config.yaml`):
 - `ANTHROPIC_API_KEY`: Claude API key
 
-Optional (per-user webhook/SMTP credentials configured in config.yaml):
-- `FEISHU_WEBHOOK_<USER>`, `WECOM_WEBHOOK`, `DINGTALK_WEBHOOK`, `DINGTALK_SECRET`
+Optional (SMTP credentials for email subscriptions configured in config.yaml):
 - `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_SENDER`
 - `ADMIN_PASSWORD`: Admin dashboard password (when `admin.password: ${ADMIN_PASSWORD}` in config)
 
-## Config Migration
+## Config Structure
 
-The config format changed from single-user to multi-user. Old `config.yaml` files with a top-level `notify:` section must be rewritten using the new `users:` list format. See `config.example.yaml` for the current structure.
+The configuration uses a **subscription-based user model** — all paper recipients come from the SQLite `subscriptions` table (created via the `/subscribe` web form), not from `config.yaml`. The `config.yaml` only contains global settings (fetch, scoring, email SMTP, thresholds). See `config.example.yaml` for the current structure.
 
 ## Troubleshooting
 

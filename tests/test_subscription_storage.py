@@ -284,3 +284,38 @@ def test_update_subscription_inactive_returns_false(db):
 
     assert db.update_subscription("user@example.com", ["moe"]) is False
     assert db.get_subscription("user@example.com")["sub_domains"] == ["quantization"]
+
+
+def test_load_subscriptions_applies_global_thresholds(db):
+    """Global ThresholdsConfig values are applied to generated UserConfig objects."""
+    from paper_agent.config import AppConfig, EmailNotifierConfig, ThresholdsConfig
+    from paper_agent.subscriptions import load_subscriptions_into_config
+
+    db.add_subscription("user1@example.com", ["quantization"])
+    db.add_subscription("user2@example.com", ["serving"])
+
+    config = AppConfig(
+        storage={"db_path": str(db.db_path)},
+        email=EmailNotifierConfig(
+            enabled=True,
+            smtp_host="smtp.example.com",
+            smtp_user="system@example.com",
+            smtp_password="secret",
+        ),
+        thresholds=ThresholdsConfig(
+            min_relevance=8.0,
+            min_quality=7.5,
+            top_n=25,
+            per_sub_domain_top_n=12,
+            min_tier="breakthrough",
+        ),
+    )
+    load_subscriptions_into_config(config)
+
+    assert len(config.users) == 2
+    for user in config.users:
+        assert user.thresholds.min_relevance == 8.0
+        assert user.thresholds.min_quality == 7.5
+        assert user.thresholds.top_n == 25
+        assert user.thresholds.per_sub_domain_top_n == 12
+        assert user.thresholds.min_tier == "breakthrough"

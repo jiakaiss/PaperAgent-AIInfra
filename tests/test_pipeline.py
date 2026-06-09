@@ -251,29 +251,22 @@ def test_pipeline_run_specific_user(mock_scorer_cls, mock_fetcher_cls):
 
 
 def test_superset_keywords():
-    """Pipeline builds superset of keywords from all users' subscriptions."""
+    """Pipeline builds superset of keywords: global fetch keywords + all sub-domain names."""
     config = AppConfig(
         fetch=FetchConfig(keywords=["base_keyword"]),
         scoring=ScoringConfig(),
-        users=[
-            UserConfig(
-                user_id="alice",
-                subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
-            ),
-            UserConfig(
-                user_id="bob",
-                subscriptions=SubscriptionConfig(sub_domains=["distillation"]),
-            ),
-        ],
+        users=[],  # users no longer affect keyword superset
     )
 
     pipeline = Pipeline.__new__(Pipeline)
     keywords = pipeline._build_superset_keywords(config)
 
-    # Should include base keyword + sub-domain names (not all sub-domain keywords)
+    # Should include base keyword + ALL sub-domain names (not user-driven anymore)
     assert "base_keyword" in keywords
-    assert "quantization" in keywords  # sub-domain name
-    assert "distillation" in keywords  # sub-domain name
+    assert "quantization" in keywords  # always included now
+    assert "distillation" in keywords  # always included now
+    # distributed_training → "distributed training" (underscores become spaces)
+    assert "distributed training" in keywords
 
 
 @patch("paper_agent.pipeline.ArxivFetcher")

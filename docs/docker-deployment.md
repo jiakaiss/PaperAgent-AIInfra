@@ -19,8 +19,12 @@ Open the public web port in your firewall/security group. The default host port 
 git clone <your-repo-url> paper_agent
 cd paper_agent
 cp .env.example .env
-cp deploy/config/config.yaml.example deploy/config/config.yaml
+cp config.example.yaml deploy/config/config.yaml
 ```
+
+Edit `deploy/config/config.yaml` — for Docker, change two paths:
+- `storage.db_path` → `/app/data/paper_agent.db`
+- `logging.file` → `/app/logs/paper-agent.log`
 
 Edit `.env` and fill secrets:
 
@@ -44,7 +48,7 @@ Edit `deploy/config/config.yaml` if you need to change:
 - arXiv fetch keywords/categories
 - scoring model/base URL
 - schedule time
-- thresholds and manually configured users
+- global thresholds
 
 The Docker template stores runtime data under `/app/data`, mapped to `deploy/data` on the host.
 

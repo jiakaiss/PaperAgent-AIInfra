@@ -41,8 +41,8 @@ _TIER_STYLE = {
 def format_paper_line(sp: ScoredPaper, index: int) -> str:
     """Format a single paper as a compact line for messaging.
 
-    Includes the impact tier as a prefix marker so webhook recipients
-    (Feishu / WeCom / DingTalk) also see the tiering signal.
+    Includes the impact tier as a prefix marker so email recipients
+    also see the tiering signal.
     """
     tier = sp.impact_tier if sp.impact_tier in TIER_LABELS_ZH else "solid"
     tier_marker = TIER_LABELS_ZH[tier]

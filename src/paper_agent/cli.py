@@ -109,9 +109,9 @@ def daemon(config: str, user: tuple[str, ...], log_file: str | None):
 @click.option(
     "--notifier",
     "-n",
-    type=click.Choice(["email", "wecom", "feishu", "dingtalk"]),
+    type=click.Choice(["email"]),
     required=True,
-    help="Which notifier to test",
+    help="Which notifier to test (only email supported)",
 )
 @click.option(
     "--user",
@@ -131,6 +131,9 @@ def test(config: str, notifier: str, user: str):
         sys.exit(1)
 
     setup_logging(cfg.logging.level, cfg.logging.file)
+
+    # Load subscriptions from database (users come from subscription system)
+    load_subscriptions_into_config(cfg)
 
     # Find the user
     user_cfg = None
@@ -186,22 +189,14 @@ def stats(config: str, user: str | None):
     if user:
         click.echo(f"  Filtered for:   {user}")
 
-    # Show configured users
+    # Show configured users (from subscription system)
+    load_subscriptions_into_config(cfg)
     if cfg.users:
-        click.echo("\n👥 Configured Users:")
+        click.echo("\n👥 Subscribed Users:")
         for u in cfg.users:
             display = u.display_name or u.user_id
             subs = ", ".join(u.subscriptions.sub_domains)
-            notifiers = []
-            if u.notify.email.enabled:
-                notifiers.append("email")
-            if u.notify.wecom.enabled:
-                notifiers.append("wecom")
-            if u.notify.feishu.enabled:
-                notifiers.append("feishu")
-            if u.notify.dingtalk.enabled:
-                notifiers.append("dingtalk")
-            notifier_str = ", ".join(notifiers) if notifiers else "none"
+            notifier_str = "email" if u.notify.email.enabled else "none"
             click.echo(f"  • {display} ({u.user_id}): [{subs}] → {notifier_str}")
     click.echo()
 

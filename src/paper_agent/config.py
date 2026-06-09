@@ -182,23 +182,7 @@ class EmailNotifierConfig(BaseModel):
     unsubscribe_url: str = ""
 
 
-class WeComNotifierConfig(BaseModel):
-    enabled: bool = False
-    webhook_url: str = ""
-
-
-class FeishuNotifierConfig(BaseModel):
-    enabled: bool = False
-    webhook_url: str = ""
-
-
-class DingTalkNotifierConfig(BaseModel):
-    enabled: bool = False
-    webhook_url: str = ""
-    secret: str = ""
-
-
-# ─── Per-user configuration ───
+# ─── Per-user configuration (internal models, used by subscription system) ───
 
 
 class SubscriptionConfig(BaseModel):
@@ -217,12 +201,9 @@ class SubscriptionConfig(BaseModel):
 
 
 class UserNotifyConfig(BaseModel):
-    """Notification channels for a single user."""
+    """Notification channels for a single user (only email supported)."""
 
     email: EmailNotifierConfig = Field(default_factory=EmailNotifierConfig)
-    wecom: WeComNotifierConfig = Field(default_factory=WeComNotifierConfig)
-    feishu: FeishuNotifierConfig = Field(default_factory=FeishuNotifierConfig)
-    dingtalk: DingTalkNotifierConfig = Field(default_factory=DingTalkNotifierConfig)
 
 
 class UserThresholdsConfig(BaseModel):
@@ -351,6 +332,29 @@ class StorageConfig(BaseModel):
     db_path: str = "paper_agent.db"
 
 
+class ThresholdsConfig(BaseModel):
+    """Global filtering thresholds shared by all subscription users.
+
+    Replaces the per-user ``UserThresholdsConfig`` once present in the legacy
+    static ``users`` list. The subscription system reads these values when
+    building a ``UserConfig`` for each active subscription email.
+    """
+
+    min_relevance: float = 6.0
+    min_quality: float = 5.0
+    top_n: int = 10
+    per_sub_domain_top_n: int = 20
+    min_tier: Literal["breakthrough", "solid", "incremental"] = "solid"
+
+    @model_validator(mode="after")
+    def _check_positive_limits(self) -> ThresholdsConfig:
+        if self.top_n <= 0:
+            raise ValueError("thresholds top_n must be positive")
+        if self.per_sub_domain_top_n <= 0:
+            raise ValueError("thresholds per_sub_domain_top_n must be positive")
+        return self
+
+
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     file: str | None = None
@@ -392,20 +396,12 @@ class AppConfig(BaseModel):
     email: EmailNotifierConfig = Field(default_factory=EmailNotifierConfig)
     subscriptions: SubscriptionDefaultsConfig = Field(default_factory=SubscriptionDefaultsConfig)
     web: WebConfig = Field(default_factory=WebConfig)
+    thresholds: ThresholdsConfig = Field(default_factory=ThresholdsConfig)
     users: list[UserConfig] = Field(default_factory=list)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     admin: AdminConfig = Field(default_factory=AdminConfig)
-
-    @field_validator("users")
-    @classmethod
-    def validate_unique_user_ids(cls, users: list[UserConfig]) -> list[UserConfig]:
-        ids = [u.user_id for u in users]
-        if len(ids) != len(set(ids)):
-            dupes = [uid for uid in ids if ids.count(uid) > 1]
-            raise ValueError(f"Duplicate user_id(s): {set(dupes)}")
-        return users
 
     @model_validator(mode="after")
     def validate_email_config(self) -> AppConfig:

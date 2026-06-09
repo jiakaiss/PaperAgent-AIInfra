@@ -1,6 +1,9 @@
 # Paper Agent 配置文件
 # 复制为 config.yaml 并填入你的实际配置
 # 敏感信息可使用 ${ENV_VAR} 从环境变量读取
+#
+# 用户来源：所有论文推送用户都通过 Web 表单订阅（/subscribe）添加，存入
+# SQLite 的 subscriptions 表。本配置文件不再需要 users 列表。
 
 # ─── arXiv 抓取配置（全局共享） ───
 fetch:
@@ -15,19 +18,16 @@ fetch:
     - distributed training
     - model parallelism
     - pipeline parallelism
-    - data parallelism
     - tensor parallelism
     - inference optimization
     - model serving
     - GPU scheduling
-    - GPU cluster
     - large language model infrastructure
     - mixture of experts
     - speculative decoding
     - KV cache
     - quantization
     - model compression
-    - checkpoint
     - all-reduce
     - communication optimization
     - memory optimization
@@ -86,12 +86,9 @@ scoring:
   #
   #     {papers}
 
-# ─── 全局邮件配置（用于订阅用户） ───
-# 通过 Web 表单订阅的用户将使用此 SMTP 配置接收推送邮件
-# 如果未配置此项，订阅用户将无法收到邮件（但仍可在 Web 界面浏览论文）
-#
-# 注意：此配置仅影响通过 Web 表单订阅的用户
-# 在 config.yaml 中手动配置的用户可以使用各自的 SMTP 配置
+# ─── 全局邮件配置 ───
+# 邮件是唯一支持的推送渠道。通过 Web 表单订阅的所有用户都使用这里的 SMTP 配置。
+# 如果未配置此项，订阅用户将无法收到邮件（但仍可在 Web 界面浏览论文）。
 email:
   enabled: false                 # 设为 true 以启用邮件推送功能
   smtp_host: smtp.gmail.com      # SMTP 服务器地址
@@ -101,9 +98,26 @@ email:
   sender: ${SMTP_SENDER}         # 发件人邮箱（通常与 smtp_user 相同）
   use_tls: true                  # 是否使用 TLS 加密
 
+# ─── 全局推送阈值 ───
+# 适用于所有通过 Web 订阅的用户。订阅时用户在 Web 表单选择感兴趣的 sub_domains，
+# 其他过滤条件全部在此统一配置。
+#
+# 可用的子领域 (sub_domains)：
+#   quantization, distillation, pruning, sparsity, distributed_training,
+#   parallelism, serving, speculative_decoding, kv_cache, moe, compiler,
+#   memory_optimization, communication, scheduling
+thresholds:
+  min_relevance: 6.0             # 相关性分数下限（0-10）
+  min_quality: 5.0               # 质量分数下限（0-10）
+  top_n: 50                      # 每次推送最多论文数
+  per_sub_domain_top_n: 20       # 每个订阅领域独立取 top N 后合集去重；订阅 ["all"] 时不生效
+  min_tier: solid                # 影响力阈值；"breakthrough" = 仅重磅工作，
+                                 # "solid"（默认）= 排除渐进改进，
+                                 # "incremental" = 包含全部。
+
 # ─── Web 订阅配置 ───
 subscriptions:
-  default_top_n: 10              # Web 订阅用户每次最多推送论文数
+  default_top_n: 10              # （兼容字段；实际由 thresholds.top_n 控制）
   send_initial_digest_on_signup: true # 订阅成功后立即为该用户推送一次
   access:
     enabled: false               # 设为 true 后，订阅表单需要访问码
@@ -118,81 +132,6 @@ web:
   public_base_url: ""            # 外部访问地址，用于生成取消订阅链接，如 https://papers.example.com
   admin_contact: ""              # 订阅页"联系管理员"后的联系方式提示；为空时不显示。例如 "admin@example.com" 或 "张三 <admin@example.com>"
 
-# ─── 用户配置 ───
-# 每个用户可以订阅不同的子领域，使用不同的通知渠道
-#
-# 可用的子领域 (sub_domains):
-#   quantization        - 量化（PTQ, QAT, INT8, INT4, GPTQ, AWQ）
-#   distillation        - 蒸馏（知识蒸馏, teacher-student）
-#   pruning             - 剪枝（结构化/非结构化剪枝, lottery ticket）
-#   sparsity            - 稀疏（稀疏注意力, 2:4/N:M 稀疏）
-#   distributed_training - 分布式训练（数据并行, FSDP, DeepSpeed, ZeRO）
-#   parallelism         - 并行策略（张量/流水线/模型并行, Megatron）
-#   serving             - 推理服务（vLLM, continuous batching, PagedAttention）
-#   speculative_decoding - 投机解码（draft model, speculative inference）
-#   kv_cache            - KV Cache 管理（prefix caching, 注意力优化）
-#   moe                 - 混合专家模型（MoE, expert routing）
-#   compiler            - 深度学习编译器（TVM, XLA, MLIR, FlashAttention）
-#   memory_optimization - 内存优化（激活检查点, offloading）
-#   communication       - 通信优化（all-reduce, all-gather, NCCL）
-#   scheduling          - 调度（GPU 调度, 集群管理）
-#
-# 使用 ["all"] 订阅所有子领域
-
-users:
-  # ─── 示例用户 1: Alice，关注量化和稀疏 ───
-  - user_id: alice
-    display_name: "Alice"
-    subscriptions:
-      sub_domains: [quantization, sparsity, pruning]
-    notify:
-      feishu:
-        enabled: true
-        webhook_url: ${FEISHU_WEBHOOK_ALICE}
-    thresholds:
-      min_relevance: 6.0
-      min_quality: 5.0
-      top_n: 10
-      # min_tier: solid    # 影响力阈值；"breakthrough" = 仅重磅工作，
-                          # "solid"（默认）= 排除渐进改进，
-                          # "incremental" = 包含全部。
-      # per_sub_domain_top_n: 20   # 每个订阅领域独立取 top N 后合集去重；订阅 ["all"] 时不生效
-
-  # ─── 示例用户 2: Bob，关注蒸馏和 MoE ───
-  - user_id: bob
-    display_name: "Bob"
-    subscriptions:
-      sub_domains: [distillation, moe, serving]
-    notify:
-      email:
-        enabled: true
-        smtp_host: smtp.gmail.com
-        smtp_port: 587
-        smtp_user: ${SMTP_USER}
-        smtp_password: ${SMTP_PASSWORD}
-        sender: ${SMTP_SENDER}
-        recipients:
-          - bob@example.com
-        use_tls: true
-    thresholds:
-      min_relevance: 7.0
-      min_quality: 6.0
-      top_n: 5
-
-  # ─── 示例用户 3: 团队频道，接收所有论文 ───
-  - user_id: team_channel
-    display_name: "AI Infra Team"
-    subscriptions:
-      sub_domains: [all]
-    notify:
-      wecom:
-        enabled: true
-        webhook_url: ${WECOM_WEBHOOK}
-    thresholds:
-      min_relevance: 6.0
-      min_quality: 5.0
-      top_n: 20
-
 # ─── 定时任务配置（全局） ───
 schedule:
   enabled: true
@@ -204,7 +143,7 @@ schedule:
 
 # ─── 存储配置 ───
 storage:
-  db_path: paper_agent.db
+  db_path: paper_agent.db    # Docker 部署时改为 /app/data/paper_agent.db
 
 # ─── 管理员看板（可选） ───
 # 启用后，/admin 提供一个只有你能访问的运营看板，可查看订阅用户、
@@ -228,4 +167,5 @@ logging:
   # 设为文件路径以写入日志文件（推荐 logs/daemon.log，配合 scripts/daemon.sh
   # 持久化运行），null 则仅输出到控制台。daemon 模式下强烈建议设为文件，
   # 否则日志依赖启动 shell 的 stderr 句柄，shell 退出后日志会中断。
+  # Docker 部署时改为 /app/logs/paper-agent.log
   file: logs/daemon.log

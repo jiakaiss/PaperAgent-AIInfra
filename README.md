@@ -1,6 +1,6 @@
 # Paper Agent - AI Infra 论文智能推送系统
 
-自动从 arXiv 抓取高质量 AI Infrastructure 相关论文，通过 Claude 智能评分与分类，推送到邮件和企业微信/飞书/钉钉，并提供 Web UI 浏览与筛选。
+自动从 arXiv 抓取高质量 AI Infrastructure 相关论文，通过 Claude 智能评分与分类，按邮件订阅推送给用户，并提供 Web UI 浏览与筛选。
 
 ## 功能特点
 
@@ -9,12 +9,11 @@
 - **影响力分级** — 每篇论文自动分到「重磅突破 / 稳健工作 / 渐进改进」三档，前端按 tier 排序与视觉区分
 - **结构化洞察** — 评分时额外抽取「关键贡献 / 问题陈述 / 方法概述」，前端与邮件用彩色卡片高亮展示
 - **双轨抓取**（可选）— 每个关键词独立配额避免噪声词独占 + cs.LG/cs.DC 跨列表兜底，捞回用了不同术语的高质量工作
-- 支持邮件、企业微信、飞书、钉钉多渠道推送
-- **多用户支持** — 不同用户可订阅不同子领域、配置独立的影响力阈值，独立推送
+- **邮件订阅推送** — 唯一的推送渠道；用户通过 Web 表单订阅，系统统一使用全局 SMTP 凭据发送
 - **Web 浏览界面** — FastAPI + HTMX 论文浏览页，支持子领域筛选、影响力 tier 筛选、标题搜索、时间范围过滤、分页
 - **偏好设置** — 基于 localStorage 的浏览模式切换、子领域选择、最低影响力档位，筛选条件会同步到 URL
 - **Web 自助订阅** — 访问 `/subscribe` 输入邮箱和关注领域，自动加入定时邮件推送
-- **全局邮件配置** — 订阅用户统一继承 `config.email` SMTP 配置，支持 `${ENV_VAR}` 注入敏感信息
+- **全局阈值与邮件配置** — 所有订阅用户共享全局 `thresholds` 和 `email` 配置，支持 `${ENV_VAR}` 注入敏感信息
 - **数据库自动迁移** — 升级后老数据无缝兼容，可选 `paper-agent rescore --missing-fields` 回填新字段
 - **部署前自检** — `paper-agent doctor` 检查配置、数据库、Web 资源和邮件配置
 - **Docker / VPS 部署** — 提供 Dockerfile、docker-compose、`.env.example`、部署/备份/恢复脚本
@@ -40,21 +39,23 @@ pip install -e ".[dev]"
 # 生成配置文件模板
 paper-agent init
 
-# 编辑 config.yaml，填入你的 API 密钥、Webhook URL 和用户订阅
+# 编辑 config.yaml，填入 Claude API key 和全局 SMTP 凭据
 ```
 
-配置文件支持多用户，每个用户可独立配置订阅子领域、推送渠道和分数阈值。详见 `config.example.yaml`。
+配置文件采用单一全局配置 + Web 订阅模式：所有推送用户均来自 Web 表单订阅（写入 SQLite `subscriptions` 表），共享全局阈值与 SMTP 配置。详见 `config.example.yaml`。
 
 重要配置点：
 
 - `scoring.api_key` / `scoring.base_url`：LLM API 配置，支持 `${ENV_VAR}` 环境变量注入
-- `email`：全局 SMTP 配置，供 Web 自助订阅用户接收邮件推送
-- `users`：手动配置的用户，可继续使用飞书/企业微信/钉钉/邮件等通知渠道
-- `users[].thresholds.min_tier`：用户级影响力阈值（`breakthrough` / `solid` / `incremental`），默认 `solid`（排除渐进改进）
+- `email`：全局 SMTP 配置，供所有订阅用户接收邮件推送
+- `thresholds`：全局推送阈值（`min_relevance` / `min_quality` / `top_n` / `min_tier` / `per_sub_domain_top_n`），适用于所有订阅用户
+- `thresholds.min_tier`：影响力阈值（`breakthrough` / `solid` / `incremental`），默认 `solid`（排除渐进改进）
 - `fetch.quality_floor_strategy`：双轨抓取开关（`none` / `per_keyword_cap`），默认关闭保持向后兼容
 - `fetch.cross_list_categories`：双轨抓取中轨道 2 的 arXiv 分类（如 `[cs.LG, cs.DC]`），仅在 `per_keyword_cap` 下生效
 - `storage.db_path`：SQLite 数据库路径，Docker 部署时建议使用 `/app/data/paper_agent.db`
 - `schedule`：daemon 后台查询频率和每日推送时间配置
+
+> **注意：** 已不再支持飞书 / 企业微信 / 钉钉 webhook 推送以及在 `config.yaml` 中静态定义的 `users:` 列表。所有用户通过 Web 订阅。
 
 ### 运行
 
@@ -65,11 +66,11 @@ paper-agent doctor -c config.yaml
 # 单次运行（dry-run 模式，不发通知）
 paper-agent run --dry-run -c config.yaml
 
-# 单次运行（指定用户）
-paper-agent run --user alice --dry-run -c config.yaml
+# 单次运行（指定订阅邮箱）
+paper-agent run --user alice@example.com --dry-run -c config.yaml
 
-# 测试通知配置
-paper-agent test --notifier feishu --user alice -c config.yaml
+# 测试邮件配置（仅支持 email）
+paper-agent test --notifier email --user alice@example.com -c config.yaml
 
 # 启动 daemon（后台按间隔查询入库，每天 9:00 从缓存推送）
 paper-agent daemon -c config.yaml
@@ -140,7 +141,7 @@ scripts/restore.sh deploy/backups/paper_agent-YYYYMMDD-HHMMSS.db
 | `paper-agent web` | 启动 Web 浏览界面 |
 | `paper-agent rescore --missing-fields` | 给老论文补全 tier / 关键贡献等结构化字段 |
 | `paper-agent doctor` | 检查部署前配置、数据库、Web 资源和邮件配置 |
-| `paper-agent test` | 测试通知渠道配置 |
+| `paper-agent test --notifier email --user <email>` | 测试邮件渠道配置（仅支持 email） |
 | `paper-agent stats` | 查看数据库统计信息 |
 | `paper-agent init` | 生成配置文件模板 |
 
@@ -161,7 +162,7 @@ scripts/restore.sh deploy/backups/paper_agent-YYYYMMDD-HHMMSS.db
 
 ### Web 订阅说明
 
-Web 订阅用户不会写入 `config.yaml`，而是保存在数据库 `subscriptions` 表中。应用启动时会把 active subscriptions 转换成运行时 `UserConfig`，并从全局 `email` 配置继承 SMTP 凭据。
+所有用户都通过 Web 表单订阅，记录保存在数据库 `subscriptions` 表中。应用启动时会把 active subscriptions 转换成运行时 `UserConfig`，并从全局 `email` 配置继承 SMTP 凭据、从全局 `thresholds` 继承推送阈值。
 
 ```yaml
 email:
@@ -172,9 +173,15 @@ email:
   smtp_password: ${SMTP_PASSWORD}
   sender: ${SMTP_SENDER}
   use_tls: true
+
+thresholds:
+  min_relevance: 6.0
+  min_quality: 5.0
+  top_n: 10
+  min_tier: solid
 ```
 
-如果修改了 SMTP 配置，需要重启 Web/daemon 服务让已有订阅用户加载新配置。
+如果修改了 SMTP 配置或全局阈值，需要重启 Web/daemon 服务让已有订阅用户加载新配置。
 
 ## Docker / VPS 部署
 
@@ -182,8 +189,10 @@ email:
 
 ```bash
 cp .env.example .env
-cp deploy/config/config.yaml.example deploy/config/config.yaml
+cp config.example.yaml deploy/config/config.yaml
 # 编辑 .env 和 deploy/config/config.yaml
+# Docker 部署注意：将 storage.db_path 改为 /app/data/paper_agent.db，
+#                   将 logging.file 改为 /app/logs/paper-agent.log
 ./scripts/deploy.sh
 ```
 
@@ -237,9 +246,18 @@ paper-agent doctor -c deploy/config/config.yaml
 排序规则：**先按 tier 优先级排**（breakthrough → solid → incremental），同 tier 内按综合得分降序。
 
 用户可通过以下方式控制：
-- **config 配置**：`users[].thresholds.min_tier`（`breakthrough` / `solid` / `incremental`）
+- **全局配置**：`thresholds.min_tier`（`breakthrough` / `solid` / `incremental`）
 - **Web 偏好面板**：最低影响力三档单选开关
 - **URL 参数**：`?tier=breakthrough&tier=solid&tier=incremental`
+
+## 从旧版本迁移
+
+旧版本（含 `users:` 列表和飞书/企微/钉钉 webhook 推送）升级到当前版本需要：
+
+1. 从 `config.yaml` 中删除 `users:` 列表
+2. 把原 `users[].thresholds` 的阈值合并到新的全局 `thresholds:` 段（参考 `config.example.yaml`）
+3. 删除任何 `feishu` / `wecom` / `dingtalk` 相关配置和环境变量
+4. 已订阅但通过非邮件渠道接收推送的用户，需通过 `/subscribe` 重新订阅获取邮件推送
 
 ## 技术栈
 
