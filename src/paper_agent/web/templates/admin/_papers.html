@@ -1,0 +1,72 @@
+{# Paper library overview partial. #}
+<div class="panel-body">
+    <div class="admin-cards">
+        <div class="stat-card">
+            <div class="stat-num">{{ total }}</div>
+            <div class="stat-label">缓存总数</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-num">{{ today_count }}</div>
+            <div class="stat-label">今日新增（{{ today_iso[5:] }}）</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-num">{{ week_count }}</div>
+            <div class="stat-label">7 天新增（自 {{ week_ago_iso[5:] }}）</div>
+        </div>
+    </div>
+
+    <h3 class="admin-subheader">影响力分布</h3>
+    <table class="admin-table admin-bars">
+        <tbody>
+            {% for tr in tier_rows %}
+            <tr>
+                <td class="admin-tier-label admin-tier-{{ tr.tier }}">{{ tr.tier }}</td>
+                <td class="admin-num">{{ tr.count }}</td>
+                <td class="admin-bar-cell">
+                    <div class="bar">
+                        <div class="bar-fill bar-fill-{{ tr.tier }}" style="width: {{ tr.pct }}%"></div>
+                    </div>
+                </td>
+                <td class="admin-num admin-pct">{{ tr.pct }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3 class="admin-subheader">子领域分布（按数量降序）</h3>
+    <table class="admin-table admin-bars">
+        <tbody>
+            {% for sr in sub_rows %}
+            <tr>
+                <td class="admin-tag-cell">{{ sr.tag }}</td>
+                <td class="admin-num">{{ sr.count }}</td>
+                <td class="admin-bar-cell">
+                    <div class="bar">
+                        <div class="bar-fill" style="width: {{ sr.pct }}%"></div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3 class="admin-subheader">最近 7 天每日打分量（最新在左）</h3>
+    <div class="admin-table-wrap">
+        <table class="admin-table admin-daily">
+            <thead>
+                <tr>
+                    {% for d in daily_papers %}
+                    <th>{{ d.date[5:] }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    {% for d in daily_papers %}
+                    <td class="admin-num {% if d.count == 0 %}admin-num-zero{% endif %}">{{ d.count }}</td>
+                    {% endfor %}
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>

@@ -150,6 +150,7 @@ scripts/restore.sh deploy/backups/paper_agent-YYYYMMDD-HHMMSS.db
 - **分页** — 每页 25 篇，按影响力优先排序（breakthrough → solid → incremental），同 tier 内按综合得分排序
 - **URL 可分享** — 筛选条件编码在 URL 中，可收藏或分享
 - **自助订阅** — 访问 `/subscribe` 填写邮箱和关注领域，订阅信息写入 SQLite，daemon 后续按订阅推送
+- **管理员看板** — `/admin` 路径（默认关闭）。开启后用 HTTP Basic Auth 鉴权，提供订阅用户列表、推送统计、论文库概览、系统状态四个面板，以及订阅 CSV 导出。详见 [CLAUDE.md](CLAUDE.md#admin-dashboard-webadminpy) 的 Admin Dashboard 章节。
 
 ### Web 订阅说明
 

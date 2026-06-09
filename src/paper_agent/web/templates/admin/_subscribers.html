@@ -1,0 +1,68 @@
+{# Subscribers partial: full panel body (replaces the outer <section>'s body). #}
+<div class="panel-body">
+    <form class="admin-search-form"
+          hx-get="/admin/_subscribers"
+          hx-target="#panel-subscribers"
+          hx-swap="innerHTML">
+        <input type="search" name="q" value="{{ q }}" placeholder="搜索邮箱…" class="admin-input">
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="order" value="{{ order }}">
+        <button type="submit" class="admin-btn">搜索</button>
+    </form>
+
+    {% set sort_map = [
+        ('created_at', '订阅时间'),
+        ('email', '邮箱'),
+        ('status', '状态'),
+        ('total_sent', '累计'),
+        ('last_sent_at', '最近一次')
+    ] %}
+
+    <p class="admin-summary">共 <strong>{{ rows|length }}</strong> 条{% if q %}（已按 "{{ q }}" 过滤）{% endif %}</p>
+
+    <div class="admin-table-wrap">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    {% for col, label in sort_map %}
+                    {% set next_order = 'asc' if (sort == col and order == 'desc') else 'desc' %}
+                    <th>
+                        <a href="#"
+                           hx-get="/admin/_subscribers?q={{ q|urlencode }}&sort={{ col }}&order={{ next_order }}"
+                           hx-target="#panel-subscribers"
+                           hx-swap="innerHTML">
+                            {{ label }}
+                            {% if sort == col %}{{ '▼' if order == 'desc' else '▲' }}{% endif %}
+                        </a>
+                    </th>
+                    {% endfor %}
+                    <th>子领域</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr class="{% if row.status != 'active' %}admin-row-inactive{% endif %}">
+                    <td class="admin-mono">{{ row.id }}</td>
+                    <td>{{ format_ts(row.created_at) }}</td>
+                    <td class="admin-email">{{ row.email }}</td>
+                    <td>
+                        {% if row.status == 'active' %}
+                            <span class="admin-tag admin-tag-active">active</span>
+                        {% else %}
+                            <span class="admin-tag admin-tag-inactive" title="退订于 {{ format_ts(row.unsubscribed_at) }}">unsubscribed</span>
+                        {% endif %}
+                    </td>
+                    <td class="admin-num">{{ row.total_sent }}</td>
+                    <td>{{ format_ts(row.last_sent_at) }}</td>
+                    <td title="{{ row.sub_domains|join(', ') }}">
+                        {{ row.sub_domain_count }} 个
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="admin-empty">无订阅记录</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>

@@ -1,0 +1,52 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<div class="dashboard-grid">
+    {# Each panel: load on open, refresh on the panel's own custom event.
+       The button dispatches the event up to the section so we don't need
+       per-panel bespoke wiring. #}
+    <section class="panel" id="panel-subscribers" hx-get="/admin/_subscribers" hx-trigger="load, refresh">
+        <header class="panel-header">
+            <h2>📋 订阅用户</h2>
+            <button type="button" class="btn-refresh"
+                    onclick="document.getElementById('panel-subscribers').dispatchEvent(new Event('refresh'))">
+                ↻ 刷新
+            </button>
+        </header>
+        <div class="panel-body">加载中…</div>
+    </section>
+
+    <section class="panel" id="panel-user-stats" hx-get="/admin/_user_stats" hx-trigger="load, refresh">
+        <header class="panel-header">
+            <h2>📈 推送统计</h2>
+            <button type="button" class="btn-refresh"
+                    onclick="document.getElementById('panel-user-stats').dispatchEvent(new Event('refresh'))">
+                ↻ 刷新
+            </button>
+        </header>
+        <div class="panel-body">加载中…</div>
+    </section>
+
+    <section class="panel" id="panel-papers" hx-get="/admin/_papers" hx-trigger="load, refresh">
+        <header class="panel-header">
+            <h2>📚 论文库</h2>
+            <button type="button" class="btn-refresh"
+                    onclick="document.getElementById('panel-papers').dispatchEvent(new Event('refresh'))">
+                ↻ 刷新
+            </button>
+        </header>
+        <div class="panel-body">加载中…</div>
+    </section>
+
+    <section class="panel" id="panel-system" hx-get="/admin/_system" hx-trigger="load, refresh">
+        <header class="panel-header">
+            <h2>⚙️ 系统状态</h2>
+            <button type="button" class="btn-refresh"
+                    onclick="document.getElementById('panel-system').dispatchEvent(new Event('refresh'))">
+                ↻ 刷新
+            </button>
+        </header>
+        <div class="panel-body">加载中…</div>
+    </section>
+</div>
+{% endblock %}

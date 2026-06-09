@@ -32,6 +32,8 @@ paper-agent daemon -c config.yaml
 paper-agent stats -c config.yaml
 paper-agent web -c config.yaml                     # launch web UI on 127.0.0.1:8000
 paper-agent web --host 0.0.0.0 --port 9000 -c config.yaml  # custom bind
+# Admin dashboard lives at /admin (enable via config.admin + ADMIN_PASSWORD env var).
+# See "Admin Dashboard" section below for details.
 
 # Backfill cached papers scored before the structured-insights upgrade.
 # Re-scores rows where impact_tier / key_contributions are NULL; safe to interrupt.
@@ -211,6 +213,42 @@ Protocol-based (structural typing). `create_notifiers_for_user(UserNotifyConfig)
 - **飞书**: Rich text `post` format (structured JSON)
 - **钉钉**: Markdown + HMAC-SHA256 signature
 
+### Admin Dashboard (`web/admin.py`)
+
+Operator-only read-only dashboard at `/admin`, gated by HTTP Basic Auth. Off by default. Disabled or unconfigured admin returns **404** (not 401) so the surface is invisible until enabled — this is intentional and tested.
+
+**Enable:**
+```yaml
+# config.yaml
+admin:
+  enabled: true
+  username: admin
+  password: ${ADMIN_PASSWORD}   # or a literal string
+```
+Then `export ADMIN_PASSWORD=$(openssl rand -base64 24)` and restart the web server. Visit `/admin`; the browser pops the native Basic Auth prompt.
+
+**Routes** (all under `/admin`, all share the `verify_admin` dependency):
+| Path | Returns |
+|------|---------|
+| `GET /admin` | Shell page with 4 HTMX-loaded panels |
+| `GET /admin/_subscribers` | Subscriber table (search by email, sortable columns) |
+| `GET /admin/_user_stats` | Per-user 7d/30d/total counts + 7-day daily-totals table |
+| `GET /admin/_papers` | Cache stat cards, tier distribution (CSS bars), sub-domain distribution, 7-day daily-scored table |
+| `GET /admin/_system` | Scoring model, schedule, SMTP host, DB path+size, last ingest/digest, active-vs-runtime mismatch flag |
+| `GET /admin/subscribers.csv` | Full subscriber list as CSV download |
+
+**Data sources:** all read-only queries via `PaperDatabase` aggregate methods (`get_user_stats`, `get_daily_sent_counts`, `get_daily_paper_counts`, `get_tier_distribution`, `count_active_subscriptions`, `list_subscriptions`, `get_last_ingest_at`, `get_last_digest_at`). No mutations — to delete sent records, change thresholds, or trigger a digest, still use CLI/SQL.
+
+**Security invariants** (enforced by tests; do not violate when adding panels):
+- Admin responses NEVER render `scoring.api_key`, `email.smtp_password`, `subscriptions.unsubscribe.secret`, or `subscriptions.access.access_codes`. Tests parameterize over every admin URL × every sentinel secret. New panels added in violation will fail `test_admin.py::TestSecrets::test_secret_never_rendered`.
+- Never pass the raw `AppConfig` to a template — always project specific fields (see `admin_system()` for the pattern).
+- `verify_admin` compares BOTH username and password with `secrets.compare_digest` even when the username is wrong, so wrong-username and wrong-password take indistinguishable time (no enumeration timing channel).
+- The dashboard MUST be served over HTTPS in production — HTTP Basic Auth credentials transit in clear over plain HTTP.
+
+**Toggling at runtime:** not supported. `admin.enabled` is read once at `create_app` time; flipping it requires a web server restart.
+
+**Disabled-mode behavior:** when `admin.enabled=false` OR `admin.password` is empty/whitespace, the admin router is **not registered**. Every `/admin*` URL returns FastAPI's default 404 with no `WWW-Authenticate` header. Startup logs the chosen mode at INFO.
+
 ## Environment Variables
 
 Required (unless `scoring.api_key` is set in `config.yaml`):
@@ -219,6 +257,7 @@ Required (unless `scoring.api_key` is set in `config.yaml`):
 Optional (per-user webhook/SMTP credentials configured in config.yaml):
 - `FEISHU_WEBHOOK_<USER>`, `WECOM_WEBHOOK`, `DINGTALK_WEBHOOK`, `DINGTALK_SECRET`
 - `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_SENDER`
+- `ADMIN_PASSWORD`: Admin dashboard password (when `admin.password: ${ADMIN_PASSWORD}` in config)
 
 ## Config Migration
 

@@ -1,0 +1,315 @@
+/* Paper Agent — Admin Dashboard styles.
+ * Every rule scoped under .admin-page so this CSS cannot leak into the
+ * public site even if both stylesheets are accidentally loaded.
+ */
+
+.admin-page {
+    margin: 0;
+    padding: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f5f7fa;
+    color: #1a1a2e;
+    line-height: 1.5;
+}
+
+.admin-page .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+}
+
+.admin-page .admin-header {
+    background: #1e293b;
+    color: #f8fafc;
+    padding: 0.75rem 0;
+    border-bottom: 3px solid #2563eb;
+}
+.admin-page .admin-header .container {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+}
+.admin-page .admin-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0;
+}
+.admin-page .admin-nav {
+    margin-left: auto;
+    display: flex;
+    gap: 1rem;
+}
+.admin-page .admin-link {
+    color: #cbd5e1;
+    text-decoration: none;
+    font-size: 0.875rem;
+}
+.admin-page .admin-link:hover { color: #f8fafc; }
+
+.admin-page .admin-main { padding: 1.5rem 0; }
+.admin-page .admin-footer {
+    padding: 1rem 0;
+    color: #94a3b8;
+    text-align: center;
+}
+
+/* Dashboard grid: 2x2 on wide screens, single column on narrow. */
+.admin-page .dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+}
+@media (max-width: 1100px) {
+    .admin-page .dashboard-grid { grid-template-columns: 1fr; }
+}
+
+/* Panel containers. */
+.admin-page .panel {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.admin-page .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: #f1f5f9;
+    border-bottom: 1px solid #e2e8f0;
+}
+.admin-page .panel-header h2 {
+    font-size: 1rem;
+    margin: 0;
+    font-weight: 600;
+}
+.admin-page .panel-body {
+    padding: 1rem;
+    overflow-x: auto;
+}
+.admin-page .btn-refresh {
+    background: transparent;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 0.25rem 0.625rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: #334155;
+}
+.admin-page .btn-refresh:hover { background: #e2e8f0; }
+
+/* Tables. */
+.admin-page .admin-table-wrap { overflow-x: auto; }
+.admin-page .admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+.admin-page .admin-table th,
+.admin-page .admin-table td {
+    padding: 0.5rem 0.625rem;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+.admin-page .admin-table thead th {
+    background: #f8fafc;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #475569;
+}
+.admin-page .admin-table thead a {
+    color: inherit;
+    text-decoration: none;
+}
+.admin-page .admin-table thead a:hover { color: #2563eb; }
+.admin-page .admin-table tbody tr:hover { background: #f8fafc; }
+.admin-page .admin-row-inactive { opacity: 0.55; }
+.admin-page .admin-num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin-page .admin-num-zero { color: #cbd5e1; }
+.admin-page .admin-pct { color: #64748b; font-size: 0.8125rem; }
+.admin-page .admin-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8125rem; }
+.admin-page .admin-email { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8125rem; }
+.admin-page .admin-empty { text-align: center; padding: 1.5rem; color: #94a3b8; }
+
+/* Search / form widgets. */
+.admin-page .admin-search-form {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+.admin-page .admin-input {
+    flex: 1;
+    padding: 0.375rem 0.625rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    font-size: 0.875rem;
+}
+.admin-page .admin-btn {
+    padding: 0.375rem 0.875rem;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.875rem;
+}
+.admin-page .admin-btn:hover { background: #1d4ed8; }
+.admin-page .admin-summary { font-size: 0.8125rem; color: #64748b; margin: 0.5rem 0; }
+.admin-page .admin-subheader {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #475569;
+    margin: 1.25rem 0 0.5rem;
+}
+
+/* Status tags. */
+.admin-page .admin-tag {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.6875rem;
+    font-weight: 500;
+}
+.admin-page .admin-tag-active { background: #d1fae5; color: #065f46; }
+.admin-page .admin-tag-inactive { background: #fee2e2; color: #991b1b; }
+.admin-page .admin-tag-static { background: #e0e7ff; color: #3730a3; }
+
+/* Tier-specific labels. */
+.admin-page .admin-tier-label {
+    font-weight: 600;
+    text-transform: capitalize;
+}
+.admin-page .admin-tier-breakthrough { color: #8b5cf6; }
+.admin-page .admin-tier-solid { color: #2563eb; }
+.admin-page .admin-tier-incremental { color: #64748b; }
+.admin-page .admin-tag-cell { font-family: ui-monospace, monospace; font-size: 0.8125rem; }
+
+/* CSS bars (tier / sub-domain distribution). */
+.admin-page .admin-bars td { padding: 0.375rem 0.625rem; }
+.admin-page .admin-bar-cell { width: 60%; }
+.admin-page .bar {
+    background: #f1f5f9;
+    border-radius: 9999px;
+    height: 14px;
+    overflow: hidden;
+    width: 100%;
+}
+.admin-page .bar-fill {
+    background: #93c5fd;
+    height: 100%;
+    transition: width 0.3s ease;
+}
+.admin-page .bar-fill-breakthrough { background: #8b5cf6; }
+.admin-page .bar-fill-solid { background: #2563eb; }
+.admin-page .bar-fill-incremental { background: #94a3b8; }
+
+/* Stat cards. */
+.admin-page .admin-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+.admin-page .stat-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    text-align: center;
+}
+.admin-page .stat-num {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1.2;
+}
+.admin-page .stat-label {
+    font-size: 0.75rem;
+    color: #64748b;
+    margin-top: 0.25rem;
+}
+
+/* Daily-totals table — narrow columns. */
+.admin-page .admin-daily th,
+.admin-page .admin-daily td {
+    text-align: center;
+    padding: 0.375rem;
+    font-variant-numeric: tabular-nums;
+}
+.admin-page .admin-daily th { font-size: 0.6875rem; color: #64748b; }
+.admin-page .admin-daily td { font-weight: 600; }
+
+/* System status definition list. */
+.admin-page .admin-dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.5rem 1rem;
+    margin: 0;
+}
+.admin-page .admin-dl dt {
+    font-weight: 500;
+    color: #475569;
+    font-size: 0.8125rem;
+}
+.admin-page .admin-dl dd {
+    margin: 0;
+    font-size: 0.875rem;
+}
+.admin-page .admin-muted { color: #94a3b8; font-size: 0.8125rem; }
+.admin-page .admin-warn { color: #d97706; font-weight: 500; }
+
+/* Mismatch warning — clearly visible. */
+.admin-page .mismatch-warning {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.125rem 0.5rem;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+/* Daemon liveness banner — appears at the top of the system panel. The
+ * color-coded dot is the at-a-glance signal; the text fills in detail. */
+.admin-page .daemon-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    flex-wrap: wrap;
+    padding: 0.625rem 0.875rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+    border: 1px solid;
+}
+.admin-page .daemon-running { background: #d1fae5; border-color: #10b981; color: #065f46; }
+.admin-page .daemon-stale   { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
+.admin-page .daemon-dead    { background: #fee2e2; border-color: #ef4444; color: #991b1b; }
+.admin-page .daemon-never   { background: #f1f5f9; border-color: #94a3b8; color: #475569; }
+.admin-page .daemon-banner .admin-muted { color: inherit; opacity: 0.75; font-size: 0.8125rem; }
+.admin-page .daemon-banner code {
+    background: rgba(0, 0, 0, 0.08);
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.8125rem;
+}
+
+.admin-page .daemon-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.admin-page .daemon-dot-running { background: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,0.2); }
+.admin-page .daemon-dot-stale   { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,0.2); }
+.admin-page .daemon-dot-dead    { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.2); }
+.admin-page .daemon-dot-never   { background: #94a3b8; }

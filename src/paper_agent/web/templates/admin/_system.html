@@ -1,0 +1,75 @@
+{# System status partial — sensitive credentials are NEVER rendered here. #}
+<div class="panel-body">
+    {# Daemon status banner — appears first because it's the single most
+       actionable signal: "is the background still doing its job?" #}
+    {% set d = daemon %}
+    {% if d.status == 'running' %}
+        <div class="daemon-banner daemon-running">
+            <span class="daemon-dot daemon-dot-running"></span>
+            <strong>Daemon 运行中</strong>
+            <span class="admin-muted">PID {{ d.pid }} · 已运行 {{ d.uptime_human }} · 最后心跳 {{ d.last_heartbeat_human }}（{{ d.last_event }}）</span>
+        </div>
+    {% elif d.status == 'stale' %}
+        <div class="daemon-banner daemon-stale">
+            <span class="daemon-dot daemon-dot-stale"></span>
+            <strong>⚠ Daemon 心跳异常</strong>
+            <span class="admin-muted">PID {{ d.pid }} 仍在，但最后心跳 {{ d.last_heartbeat_human }}（&gt; 2× 抓取周期），调度可能卡死</span>
+        </div>
+    {% elif d.status == 'dead' %}
+        <div class="daemon-banner daemon-dead">
+            <span class="daemon-dot daemon-dot-dead"></span>
+            <strong>✗ Daemon 已停止</strong>
+            <span class="admin-muted">PID {{ d.pid }} 不存在；最后事件：{{ d.last_event or '—' }}（{{ d.last_heartbeat_human }}）</span>
+        </div>
+    {% else %}
+        <div class="daemon-banner daemon-never">
+            <span class="daemon-dot daemon-dot-never"></span>
+            <strong>Daemon 从未启动</strong>
+            <span class="admin-muted">未找到心跳文件；运行 <code>paper-agent daemon -c config.yaml</code> 启动</span>
+        </div>
+    {% endif %}
+
+    <dl class="admin-dl">
+        <dt>Scoring 模型</dt>
+        <dd class="admin-mono">{{ cfg.scoring_model }}</dd>
+
+        <dt>Ingest 周期</dt>
+        <dd>{{ cfg.ingest_interval_minutes }} 分钟</dd>
+
+        <dt>Digest 时间</dt>
+        <dd>每日 {{ cfg.digest_time }}（{{ cfg.timezone }}）</dd>
+
+        <dt>SMTP 主机</dt>
+        <dd class="admin-mono">
+            {% if cfg.email_enabled %}
+                {{ cfg.smtp_host }}:{{ cfg.smtp_port }}
+            {% else %}
+                <span class="admin-warn">未启用</span>
+            {% endif %}
+        </dd>
+
+        <dt>订阅访问控制</dt>
+        <dd>{{ '已启用' if cfg.subscription_access_enabled else '未启用' }}</dd>
+
+        <dt>数据库</dt>
+        <dd class="admin-mono">{{ db_path }} <span class="admin-muted">({{ db_size_human }})</span></dd>
+
+        <dt>最近一次 ingest</dt>
+        <dd>{{ last_ingest_at }} <span class="admin-muted">（注：仅在有新论文入库时更新，daemon 仍可能正常运行）</span></dd>
+
+        <dt>最近一次 digest</dt>
+        <dd>{{ last_digest_at }}</dd>
+
+        <dt>活跃订阅数</dt>
+        <dd>
+            <strong>{{ active_subs }}</strong>
+            {% if is_mismatched %}
+                <span class="mismatch-warning" title="活跃订阅多于已加载的 runtime users，可能未重启加载">
+                    ⚠ &gt; runtime users ({{ runtime_users }})
+                </span>
+            {% else %}
+                <span class="admin-muted">/ runtime users {{ runtime_users }}</span>
+            {% endif %}
+        </dd>
+    </dl>
+</div>

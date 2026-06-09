@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin · Paper Agent{% endblock %}</title>
+    <link rel="stylesheet" href="/static/admin.css?v={{ admin_css_version }}">
+    <script src="/static/vendor/htmx.min.js"></script>
+</head>
+<body class="admin-page">
+    <header class="admin-header">
+        <div class="container">
+            <h1 class="admin-title">Paper Agent · Admin</h1>
+            <nav class="admin-nav">
+                <a href="/" class="admin-link">← 返回前台</a>
+                <a href="/admin/subscribers.csv" class="admin-link">⬇ 订阅 CSV</a>
+            </nav>
+        </div>
+    </header>
+    <main class="container admin-main">
+        {% block content %}{% endblock %}
+    </main>
+    <footer class="admin-footer">
+        <div class="container">
+            <small>read-only · changes require CLI</small>
+        </div>
+    </footer>
+</body>
+</html>

@@ -125,8 +125,7 @@ def _paper_row(sp: ScoredPaper, index: int) -> str:
     contributions_html = ""
     if sp.key_contributions:
         bullets = "".join(
-            f'<li style="margin-bottom:3px; color:#1f2937;">{c}</li>'
-            for c in sp.key_contributions
+            f'<li style="margin-bottom:3px; color:#1f2937;">{c}</li>' for c in sp.key_contributions
         )
         contributions_html = f"""
                 <div style="margin-top:10px; padding:8px 12px;

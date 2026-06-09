@@ -355,6 +355,33 @@ class LoggingConfig(BaseModel):
     file: str | None = None
 
 
+class AdminConfig(BaseModel):
+    """Single-operator admin dashboard configuration.
+
+    The dashboard is gated by HTTP Basic Auth. ``password`` supports
+    ``${ENV_VAR}`` interpolation through the same recursive substitution
+    applied to every string in the config. When ``enabled`` is False or
+    ``password`` is empty/whitespace, the admin router is not registered
+    and every ``/admin*`` URL responds 404 — indistinguishable from any
+    other unknown path. See ``is_active``.
+    """
+
+    enabled: bool = False
+    username: str = "admin"
+    password: str = ""
+
+    @property
+    def is_active(self) -> bool:
+        """True only when the operator has both opted in and set a password.
+
+        Used by the app factory to decide whether to register the admin
+        router. Empty-or-whitespace password is treated as disabled, since
+        a deployed config with no real password is a misconfiguration
+        (no credential could match) rather than "allow anyone in".
+        """
+        return self.enabled and bool(self.password.strip())
+
+
 # ─── Top-level config ───
 
 
@@ -368,6 +395,7 @@ class AppConfig(BaseModel):
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    admin: AdminConfig = Field(default_factory=AdminConfig)
 
     @field_validator("users")
     @classmethod

@@ -6,7 +6,7 @@ import json
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from paper_agent.models import DEFAULT_TIER, IMPACT_TIERS, Paper, ScoredPaper
@@ -564,3 +564,215 @@ class PaperDatabase:
                 "user_id": user_id,
                 "db_path": str(self.db_path),
             }
+
+    # ─── Admin dashboard aggregates ───
+    #
+    # These methods power the operator dashboard. They are kept on
+    # PaperDatabase (rather than a separate stats service) because they
+    # are pure SQL aggregates over the same tables already owned here.
+
+    def count_active_subscriptions(self) -> int:
+        """Number of subscription rows whose ``status = 'active'``."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM subscriptions WHERE status = 'active'"
+            ).fetchone()
+            return int(row["cnt"])
+
+    def get_user_stats(self) -> list[dict]:
+        """Per-user delivery stats for the admin dashboard.
+
+        Returns one record per user_id present in either the subscriptions
+        table OR sent_papers. Subscribed users with zero deliveries appear
+        with ``total_sent = sent_7d = sent_30d = 0`` and ``last_sent_at = None``.
+
+        Each record: ``{user_id, total_sent, sent_7d, sent_30d, last_sent_at,
+        status, sub_domains}``. The ``status`` is ``"active"`` /
+        ``"inactive"`` for subscribers, or ``None`` for sent-only users
+        (e.g. legacy CLI-configured users like ``test_user``).
+        """
+        today = date.today()
+        cutoff_7d = (today - timedelta(days=7)).isoformat()
+        cutoff_30d = (today - timedelta(days=30)).isoformat()
+
+        with self._connect() as conn:
+            # Subscription rows (active + inactive both surface in the dashboard
+            # so the operator can see who unsubscribed and when).
+            sub_rows = conn.execute(
+                """SELECT email, sub_domains, status, created_at, unsubscribed_at
+                   FROM subscriptions"""
+            ).fetchall()
+            sent_rows = conn.execute(
+                """SELECT user_id,
+                          COUNT(*) AS total_sent,
+                          SUM(CASE WHEN sent_at >= ? THEN 1 ELSE 0 END) AS sent_7d,
+                          SUM(CASE WHEN sent_at >= ? THEN 1 ELSE 0 END) AS sent_30d,
+                          MAX(sent_at) AS last_sent_at
+                   FROM sent_papers
+                   GROUP BY user_id""",
+                (cutoff_7d, cutoff_30d),
+            ).fetchall()
+
+        sent_by_user = {
+            r["user_id"]: {
+                "total_sent": int(r["total_sent"] or 0),
+                "sent_7d": int(r["sent_7d"] or 0),
+                "sent_30d": int(r["sent_30d"] or 0),
+                "last_sent_at": r["last_sent_at"],
+            }
+            for r in sent_rows
+        }
+
+        result: list[dict] = []
+        seen: set[str] = set()
+        for sr in sub_rows:
+            uid = sr["email"]
+            seen.add(uid)
+            agg = sent_by_user.get(uid, {})
+            try:
+                sub_domains = json.loads(sr["sub_domains"]) if sr["sub_domains"] else []
+            except (json.JSONDecodeError, TypeError):
+                sub_domains = []
+            result.append(
+                {
+                    "user_id": uid,
+                    "status": sr["status"],
+                    "created_at": sr["created_at"],
+                    "unsubscribed_at": sr["unsubscribed_at"],
+                    "sub_domains": sub_domains,
+                    "total_sent": agg.get("total_sent", 0),
+                    "sent_7d": agg.get("sent_7d", 0),
+                    "sent_30d": agg.get("sent_30d", 0),
+                    "last_sent_at": agg.get("last_sent_at"),
+                }
+            )
+
+        # Users that have received papers but aren't (or never were) in the
+        # subscriptions table — e.g. the static `test_user` from config.yaml.
+        # Surface them too so the dashboard reflects the full delivery picture.
+        for uid, agg in sent_by_user.items():
+            if uid in seen:
+                continue
+            result.append(
+                {
+                    "user_id": uid,
+                    "status": None,
+                    "created_at": None,
+                    "unsubscribed_at": None,
+                    "sub_domains": [],
+                    "total_sent": agg["total_sent"],
+                    "sent_7d": agg["sent_7d"],
+                    "sent_30d": agg["sent_30d"],
+                    "last_sent_at": agg["last_sent_at"],
+                }
+            )
+        return result
+
+    def _daily_counts(self, sql: str, days: int) -> list[dict]:
+        """Run a per-day ``COUNT(*)`` aggregate and pad to ``days`` entries.
+
+        The ``sql`` parameter must select ``(d TEXT, cnt INT)`` where ``d``
+        is an ISO ``YYYY-MM-DD`` date string. We left-fill missing dates
+        with ``count=0`` so the dashboard always renders ``days`` columns,
+        ordered most-recent-first.
+        """
+        if days <= 0:
+            return []
+        today = date.today()
+        cutoff = (today - timedelta(days=days - 1)).isoformat()
+        with self._connect() as conn:
+            rows = conn.execute(sql, (cutoff,)).fetchall()
+        by_date = {r["d"]: int(r["cnt"]) for r in rows}
+        out: list[dict] = []
+        for i in range(days):
+            d = (today - timedelta(days=i)).isoformat()
+            out.append({"date": d, "count": by_date.get(d, 0)})
+        return out
+
+    def get_daily_sent_counts(self, days: int = 7) -> list[dict]:
+        """Per-day delivery counts for the past ``days`` calendar days.
+
+        Returns ``[{date, count}, ...]`` ordered most-recent-first; days
+        with no deliveries are present with ``count=0``.
+        """
+        return self._daily_counts(
+            """SELECT DATE(sent_at) AS d, COUNT(*) AS cnt
+               FROM sent_papers
+               WHERE DATE(sent_at) >= ?
+               GROUP BY DATE(sent_at)""",
+            days,
+        )
+
+    def get_daily_paper_counts(self, days: int = 7) -> list[dict]:
+        """Per-day newly-scored paper counts for the past ``days`` calendar days.
+
+        Returns ``[{date, count}, ...]`` ordered most-recent-first; days
+        with no scoring activity are present with ``count=0``.
+        """
+        return self._daily_counts(
+            """SELECT DATE(scored_at) AS d, COUNT(*) AS cnt
+               FROM papers
+               WHERE DATE(scored_at) >= ?
+               GROUP BY DATE(scored_at)""",
+            days,
+        )
+
+    def get_tier_distribution(self) -> dict[str, int]:
+        """Paper count per impact tier across the entire cache.
+
+        NULL / unknown tiers fold into ``'solid'`` to match the rest of
+        the codebase. Always returns one entry per tier in ``IMPACT_TIERS``
+        even when the count is zero.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT COALESCE(impact_tier, 'solid') AS tier, COUNT(*) AS cnt
+                   FROM papers GROUP BY COALESCE(impact_tier, 'solid')"""
+            ).fetchall()
+        counts: dict[str, int] = {tier: 0 for tier in IMPACT_TIERS}
+        for row in rows:
+            tier = row["tier"]
+            if tier in counts:
+                counts[tier] += int(row["cnt"])
+        return counts
+
+    def get_last_ingest_at(self) -> str | None:
+        """ISO timestamp of the most recently scored paper, or None."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT MAX(scored_at) AS m FROM papers").fetchone()
+            return row["m"]
+
+    def get_last_digest_at(self) -> str | None:
+        """ISO timestamp of the most recently sent paper, or None."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT MAX(sent_at) AS m FROM sent_papers").fetchone()
+            return row["m"]
+
+    def list_subscriptions(self) -> list[dict]:
+        """Return every row in ``subscriptions`` (active + inactive).
+
+        Used by the admin dashboard to render the full subscription list
+        including users who have unsubscribed.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT id, email, sub_domains, created_at, status, unsubscribed_at
+                   FROM subscriptions ORDER BY created_at"""
+            ).fetchall()
+        out: list[dict] = []
+        for row in rows:
+            try:
+                sub_domains = json.loads(row["sub_domains"]) if row["sub_domains"] else []
+            except (json.JSONDecodeError, TypeError):
+                sub_domains = []
+            out.append(
+                {
+                    "id": row["id"],
+                    "email": row["email"],
+                    "sub_domains": sub_domains,
+                    "created_at": row["created_at"],
+                    "status": row["status"],
+                    "unsubscribed_at": row["unsubscribed_at"],
+                }
+            )
+        return out

@@ -205,6 +205,22 @@ schedule:
 storage:
   db_path: paper_agent.db
 
+# ─── 管理员看板（可选） ───
+# 启用后，/admin 提供一个只有你能访问的运营看板，可查看订阅用户、
+# 推送统计、论文库情况和系统状态。HTTP Basic Auth 保护，浏览器会
+# 弹出原生登录框。disabled 或 password 为空时所有 /admin* 路径返回
+# 404（不会暴露看板存在）。
+#
+# 注意：admin 看板必须通过 HTTPS 访问，否则 Basic Auth 凭据会明文传输。
+admin:
+  enabled: false                  # 设为 true 以启用看板
+  username: admin                 # Basic Auth 用户名
+  # password 支持两种写法：
+  #   1. 环境变量（推荐）：password: ${ADMIN_PASSWORD}
+  #   2. 直接明文：     password: "your-strong-password"
+  # 生成强密码示例：openssl rand -base64 24
+  password: ${ADMIN_PASSWORD}
+
 # ─── 日志配置 ───
 logging:
   level: INFO

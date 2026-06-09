@@ -1,0 +1,61 @@
+{# Per-user stats partial. #}
+<div class="panel-body">
+    <h3 class="admin-subheader">每用户累计</h3>
+    <div class="admin-table-wrap">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>用户</th>
+                    <th>类型</th>
+                    <th class="admin-num">7d</th>
+                    <th class="admin-num">30d</th>
+                    <th class="admin-num">总计</th>
+                    <th>最近一次</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td class="admin-email">{{ u.user_id }}</td>
+                    <td>
+                        {% if u.status == 'active' %}
+                            <span class="admin-tag admin-tag-active">订阅</span>
+                        {% elif u.status == 'inactive' %}
+                            <span class="admin-tag admin-tag-inactive">已退订</span>
+                        {% else %}
+                            <span class="admin-tag admin-tag-static">静态</span>
+                        {% endif %}
+                    </td>
+                    <td class="admin-num">{{ u.sent_7d }}</td>
+                    <td class="admin-num">{{ u.sent_30d }}</td>
+                    <td class="admin-num"><strong>{{ u.total_sent }}</strong></td>
+                    <td>{{ format_ts(u.last_sent_at) }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="admin-empty">尚无推送记录</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <h3 class="admin-subheader">最近 7 天每日总量（最新在左）</h3>
+    <div class="admin-table-wrap">
+        <table class="admin-table admin-daily">
+            <thead>
+                <tr>
+                    {% for d in daily %}
+                    <th>{{ d.date[5:] }}</th>{# MM-DD #}
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    {% for d in daily %}
+                    <td class="admin-num {% if d.count == 0 %}admin-num-zero{% endif %}">{{ d.count }}</td>
+                    {% endfor %}
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <p class="admin-summary">7 天合计：<strong>{{ daily_total }}</strong></p>
+</div>

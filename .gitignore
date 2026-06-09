@@ -33,6 +33,10 @@ env/
 *.db
 *.sqlite
 *.sqlite3
+# Daemon heartbeat — runtime liveness file written by the scheduler
+# (lives next to the SQLite DB as <db_path>.daemon.json).
+*.daemon.json
+*.daemon.json.tmp
 
 # Config with secrets (keep config.example.yaml and deploy/config/config.yaml.example)
 config.yaml

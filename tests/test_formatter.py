@@ -197,16 +197,16 @@ def test_email_html_insight_sections_have_color_coded_badges():
     html = format_email_html(papers)
     # Green for contributions
     assert "border-left:3px solid #10b981" in html
-    assert "background:#10b981" in html         # green badge background
-    assert "background:#ecfdf5" in html         # light green section background
+    assert "background:#10b981" in html  # green badge background
+    assert "background:#ecfdf5" in html  # light green section background
     # Blue for problem
     assert "border-left:3px solid #3b82f6" in html
-    assert "background:#3b82f6" in html         # blue badge background
-    assert "background:#eff6ff" in html         # light blue section background
+    assert "background:#3b82f6" in html  # blue badge background
+    assert "background:#eff6ff" in html  # light blue section background
     # Purple for methods
     assert "border-left:3px solid #a855f7" in html
-    assert "background:#a855f7" in html         # purple badge background
-    assert "background:#faf5ff" in html         # light purple section background
+    assert "background:#a855f7" in html  # purple badge background
+    assert "background:#faf5ff" in html  # light purple section background
 
 
 def test_email_html_insight_badges_are_white_pill_shaped():
