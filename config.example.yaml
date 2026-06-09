@@ -224,4 +224,7 @@ admin:
 # ─── 日志配置 ───
 logging:
   level: INFO
-  file: null    # 设为文件路径以写入日志文件，null 则仅输出到控制台
+  # 设为文件路径以写入日志文件（推荐 logs/daemon.log，配合 scripts/daemon.sh
+  # 持久化运行），null 则仅输出到控制台。daemon 模式下强烈建议设为文件，
+  # 否则日志依赖启动 shell 的 stderr 句柄，shell 退出后日志会中断。
+  file: logs/daemon.log

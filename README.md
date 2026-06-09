@@ -91,11 +91,17 @@ scripts/start-local.sh all
 # 只启动 Web
 scripts/start-local.sh web
 
-# 只启动 daemon（后台查询 + 每日推送）
+# 只启动 daemon（后台查询 + 每日推送，前台运行）
 scripts/start-local.sh daemon
 
+# 后台持久化运行 daemon（推荐生产环境）
+# 日志写入 logs/daemon.log（由 Python FileHandler 维护，不依赖 shell session）
+scripts/daemon.sh start
+scripts/daemon.sh status
+scripts/daemon.sh stop
+scripts/daemon.sh restart
 # 指定 Python 环境
-PYTHON_BIN=/opt/conda/envs/paper_agent/bin/python scripts/start-local.sh all
+PYTHON_BIN=/opt/conda/envs/paper_agent/bin/python scripts/daemon.sh start
 
 # 本地检查（ruff + pytest + 可选 JS tests）
 scripts/check.sh
@@ -110,12 +116,12 @@ scripts/deploy.sh
 # 查看服务状态和 Web 健康检查
 scripts/status.sh
 
-# 查看全部日志，或指定 web/daemon
-scripts/logs.sh
-scripts/logs.sh daemon
+# 查看全部日志，或指定 web/daemon（直接使用 docker compose）
+docker compose logs -f
+docker compose logs -f daemon
 
 # 停止 Docker 服务
-scripts/stop.sh
+docker compose down
 
 # 备份/恢复数据库
 scripts/backup.sh
