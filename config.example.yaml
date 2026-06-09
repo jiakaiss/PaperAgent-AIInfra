@@ -116,6 +116,7 @@ subscriptions:
 web:
   min_quality: 5.0               # Web 列表默认隐藏质量分低于该值的论文；设为 0 或 null 可关闭
   public_base_url: ""            # 外部访问地址，用于生成取消订阅链接，如 https://papers.example.com
+  admin_contact: ""              # 订阅页"联系管理员"后的联系方式提示；为空时不显示。例如 "admin@example.com" 或 "张三 <admin@example.com>"
 
 # ─── 用户配置 ───
 # 每个用户可以订阅不同的子领域，使用不同的通知渠道

@@ -474,3 +474,34 @@ def test_schedule_config_separate_ingest_digest_loads_from_yaml():
         assert cfg.schedule.digest_minute == 0
     finally:
         os.unlink(config_path)
+
+
+def test_web_admin_contact_default_empty():
+    """Default WebConfig has admin_contact = '' so no parenthetical leaks."""
+    cfg = AppConfig()
+    assert cfg.web.admin_contact == ""
+
+
+def test_web_admin_contact_round_trips_from_yaml():
+    data = {"web": {"admin_contact": "张三 <admin@example.com>"}}
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
+        yaml.dump(data, f, allow_unicode=True)
+        config_path = f.name
+    try:
+        cfg = load_config(config_path)
+        assert cfg.web.admin_contact == "张三 <admin@example.com>"
+    finally:
+        os.unlink(config_path)
+
+
+def test_web_admin_contact_absent_from_yaml_defaults_to_empty():
+    """Existing configs that don't mention admin_contact still load cleanly."""
+    data = {"web": {"min_quality": 5.0}}  # no admin_contact key at all
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(data, f)
+        config_path = f.name
+    try:
+        cfg = load_config(config_path)
+        assert cfg.web.admin_contact == ""
+    finally:
+        os.unlink(config_path)

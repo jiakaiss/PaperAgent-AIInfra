@@ -299,6 +299,7 @@ class WebConfig(BaseModel):
 
     min_quality: float | None = 5.0
     public_base_url: str = ""
+    admin_contact: str = ""
 
     @model_validator(mode="after")
     def _check_min_quality(self) -> WebConfig:

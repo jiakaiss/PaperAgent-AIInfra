@@ -218,18 +218,66 @@ code {
 }
 
 /* ── Chip filter ── */
+/* Outer container is a flex row: label cell + chips wrapper cell.
+   The chips wrapper handles its own flex-wrap so that when chips
+   break to a new row, they stay aligned to the start of the chips
+   wrapper (i.e. NOT sliding under the label). */
 .chip-filter {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+}
+
+.chip-filter-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
-    margin-bottom: 1rem;
     align-items: center;
+    flex: 1;
+    min-width: 0;
 }
 
 .chip-filter-label {
-    font-size: 0.85rem;
+    font-size: 0.95rem;
     color: var(--color-text-muted);
     margin-right: 0.3rem;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+/* Clickable variant of .chip-filter-label: opens the preferences panel. */
+.chip-filter-label-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: 0.95rem;   /* match .chip-filter-label exactly */
+    font-family: inherit;
+    line-height: inherit;
+    cursor: pointer;
+    color: var(--color-text-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+.chip-filter-label-btn:hover,
+.chip-filter-label-btn:focus-visible {
+    color: var(--color-text);
+    background: var(--color-chip-bg);
+    outline: none;
+}
+
+/* ── SVG gear icon inside the preferences toggle ── */
+.gear-svg {
+    opacity: 0.5;
+    transition: opacity 0.2s, transform 0.3s;
+}
+.chip-filter-label-btn:hover .gear-svg,
+.chip-filter-label-btn:focus-visible .gear-svg {
+    opacity: 1;
+    transform: rotate(90deg);
 }
 
 .chip {

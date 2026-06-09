@@ -13,6 +13,7 @@ from paper_agent.config import (
     ScoringConfig,
     StorageConfig,
     UserConfig,
+    WebConfig,
 )
 from paper_agent.web.app import create_app
 
@@ -397,3 +398,73 @@ def test_update_subscription_can_send_now(app_with_db, monkeypatch):
     assert response.status_code == 200
     assert "订阅已更新" in response.text
     assert calls == ["refresh@example.com"]
+
+
+# ── web.admin_contact rendering on subscribe page + error fragments ──
+
+
+def _build_client_with_admin_contact(admin_contact: str, email_enabled: bool = True) -> TestClient:
+    """Helper: build a TestClient with a custom admin_contact value."""
+    tmpdir = tempfile.mkdtemp()
+    db_path = Path(tmpdir) / "test.db"
+    config = AppConfig(
+        email=EmailNotifierConfig(
+            enabled=email_enabled,
+            smtp_host="smtp.example.com" if email_enabled else "",
+            smtp_user="system@example.com" if email_enabled else "",
+            smtp_password="secret" if email_enabled else "",
+            sender="noreply@example.com" if email_enabled else "",
+        ),
+        web=WebConfig(admin_contact=admin_contact),
+        storage=StorageConfig(db_path=str(db_path)),
+    )
+    return TestClient(create_app(config))
+
+
+def test_subscribe_page_omits_parenthetical_when_admin_contact_unset(app_with_db):
+    """Default config (admin_contact='') SHALL render 联系管理员 with no parenthetical."""
+    client, _ = app_with_db
+    response = client.get("/subscribe")
+    assert response.status_code == 200
+    assert "联系管理员" in response.text
+    # No "（" appears immediately after the 管理员 token
+    idx = response.text.find("联系管理员")
+    assert idx != -1
+    # Check the char right after 管理员 (which is 5 chars; "联系管理员" is 5 chars)
+    next_char = response.text[idx + len("联系管理员")]
+    assert next_char != "（", (
+        f"Expected no parenthetical after 管理员 when admin_contact is empty, got: {next_char!r}"
+    )
+
+
+def test_subscribe_page_renders_admin_contact_parenthetical_when_set():
+    """When web.admin_contact is set, subscribe page SHALL include it as a parenthetical."""
+    client = _build_client_with_admin_contact("admin@example.com")
+    response = client.get("/subscribe")
+    assert response.status_code == 200
+    assert "联系管理员（admin@example.com）" in response.text
+
+
+def test_subscribe_error_includes_admin_contact_suffix():
+    """When email misconfigured AND admin_contact set, error msg SHALL include the suffix."""
+    client = _build_client_with_admin_contact("admin@example.com", email_enabled=False)
+    response = client.post(
+        "/api/subscribe",
+        data={"email": "user@example.com", "sub_domain": ["quantization"]},
+    )
+    assert response.status_code == 200
+    assert "系统未配置邮件发送功能" in response.text
+    assert "请联系管理员（admin@example.com）" in response.text
+
+
+def test_subscribe_admin_contact_is_html_escaped():
+    """Jinja2 autoescape SHALL apply — raw HTML in admin_contact must not execute."""
+    client = _build_client_with_admin_contact("<b>x</b>")
+    response = client.get("/subscribe")
+    assert response.status_code == 200
+    # Raw <b> tag SHOULD NOT appear; escaped form should
+    # Note: the literal substring "<b>x</b>" might appear in attributes/scripts unrelated
+    # to admin_contact, so search for the specific contextual rendering.
+    assert "&lt;b&gt;x&lt;/b&gt;" in response.text
+    # And the parenthetical containing raw HTML must NOT appear
+    assert "联系管理员（<b>x</b>）" not in response.text

@@ -84,65 +84,73 @@
 
         {# Sub-domain chip filter (visible on the main page) #}
         <div class="chip-filter">
-            <span class="chip-filter-label">领域筛选:</span>
-            {% for tag in all_sub_domains %}
-            <button type="button"
-                    class="chip chip-filterable {% if tag in active_sub_domains %}chip-active{% endif %}"
-                    data-tag="{{ tag }}"
-                    onclick="PaperAgentPrefs.toggleChip('{{ tag }}')">
-                {{ tag }}
-                {% if sub_domain_counts.get(tag, 0) > 0 %}
-                <span class="chip-count">{{ sub_domain_counts[tag] }}</span>
-                {% endif %}
+            <button id="preferences-toggle" type="button" class="chip-filter-label chip-filter-label-btn"
+                    title="打开偏好设置（关注领域、浏览模式等）"
+                    aria-label="打开偏好设置">
+                领域筛选:<svg class="gear-svg" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.62-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.44.34.6.22l2.39-.96c.49.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.16.12.46.02.6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
             </button>
-            {% endfor %}
+            <div class="chip-filter-chips">
+                {% for tag in all_sub_domains %}
+                <button type="button"
+                        class="chip chip-filterable {% if tag in active_sub_domains %}chip-active{% endif %}"
+                        data-tag="{{ tag }}"
+                        onclick="PaperAgentPrefs.toggleChip('{{ tag }}')">
+                    {{ tag }}
+                    {% if sub_domain_counts.get(tag, 0) > 0 %}
+                    <span class="chip-count">{{ sub_domain_counts[tag] }}</span>
+                    {% endif %}
+                </button>
+                {% endfor %}
+            </div>
         </div>
 
         {# Time range chip filter #}
         <div class="chip-filter chip-filter-time">
-            <span class="chip-filter-label">时间范围:</span>
-            <button type="button"
-                    class="chip chip-time {% if not since %}chip-active{% endif %}"
-                    data-since=""
-                    onclick="PaperAgentPrefs.setSince('')">
-                All time
-            </button>
-            <button type="button"
-                    class="chip chip-time {% if since == '1w' %}chip-active{% endif %}"
-                    data-since="1w"
-                    onclick="PaperAgentPrefs.setSince('1w')">
-                1 week
-            </button>
-            <button type="button"
-                    class="chip chip-time {% if since == '1m' %}chip-active{% endif %}"
-                    data-since="1m"
-                    onclick="PaperAgentPrefs.setSince('1m')">
-                1 month
-            </button>
-            <button type="button"
-                    class="chip chip-time {% if since == '3m' %}chip-active{% endif %}"
-                    data-since="3m"
-                    onclick="PaperAgentPrefs.setSince('3m')">
-                3 months
-            </button>
-            <button type="button"
-                    class="chip chip-time {% if since == '6m' %}chip-active{% endif %}"
-                    data-since="6m"
-                    onclick="PaperAgentPrefs.setSince('6m')">
-                6 months
-            </button>
-            <button type="button"
-                    class="chip chip-time {% if since == '1y' %}chip-active{% endif %}"
-                    data-since="1y"
-                    onclick="PaperAgentPrefs.setSince('1y')">
-                1 year
-            </button>
-            <button type="button"
-                    class="chip chip-time {% if since == '3y' %}chip-active{% endif %}"
-                    data-since="3y"
-                    onclick="PaperAgentPrefs.setSince('3y')">
-                3 years
-            </button>
+            <span class="chip-filter-label">时间范围： </span>
+            <div class="chip-filter-chips">
+                <button type="button"
+                        class="chip chip-time {% if not since %}chip-active{% endif %}"
+                        data-since=""
+                        onclick="PaperAgentPrefs.setSince('')">
+                    All time
+                </button>
+                <button type="button"
+                        class="chip chip-time {% if since == '1w' %}chip-active{% endif %}"
+                        data-since="1w"
+                        onclick="PaperAgentPrefs.setSince('1w')">
+                    1 week
+                </button>
+                <button type="button"
+                        class="chip chip-time {% if since == '1m' %}chip-active{% endif %}"
+                        data-since="1m"
+                        onclick="PaperAgentPrefs.setSince('1m')">
+                    1 month
+                </button>
+                <button type="button"
+                        class="chip chip-time {% if since == '3m' %}chip-active{% endif %}"
+                        data-since="3m"
+                        onclick="PaperAgentPrefs.setSince('3m')">
+                    3 months
+                </button>
+                <button type="button"
+                        class="chip chip-time {% if since == '6m' %}chip-active{% endif %}"
+                        data-since="6m"
+                        onclick="PaperAgentPrefs.setSince('6m')">
+                    6 months
+                </button>
+                <button type="button"
+                        class="chip chip-time {% if since == '1y' %}chip-active{% endif %}"
+                        data-since="1y"
+                        onclick="PaperAgentPrefs.setSince('1y')">
+                    1 year
+                </button>
+                <button type="button"
+                        class="chip chip-time {% if since == '3y' %}chip-active{% endif %}"
+                        data-since="3y"
+                        onclick="PaperAgentPrefs.setSince('3y')">
+                    3 years
+                </button>
+            </div>
         </div>
 
         {# Paper list container — JS builds the HTMX URL from localStorage prefs #}

@@ -755,3 +755,42 @@ def test_key_contributions_hidden_when_empty():
         assert "关键贡献" not in resp.text
     finally:
         os.unlink(path)
+
+
+# ── 偏好设置 button placement (relocated from header to chip-filter row) ──
+
+
+def test_preferences_toggle_present_on_index(client):
+    """The 偏好设置 button SHALL be rendered on the main page."""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert 'id="preferences-toggle"' in resp.text
+
+
+def test_preferences_toggle_inside_chip_filter_row(client):
+    """The 偏好设置 toggle SHALL be co-located with 领域筛选 (not in the header).
+
+    The toggle is implemented as a clickable variant of the 领域筛选 label itself
+    (the same element renders both the label text and a gear icon), so we assert
+    the toggle button contains the 领域筛选 text.
+    """
+    resp = client.get("/")
+    body = resp.text
+    # The toggle button is the chip-filter label. Find the button element and
+    # check that its inner text includes 领域筛选.
+    btn_pos = body.find('id="preferences-toggle"')
+    assert btn_pos != -1
+    # Find the closing </button> after the toggle; the inner text must contain 领域筛选.
+    btn_close = body.find("</button>", btn_pos)
+    assert btn_close != -1
+    btn_html = body[btn_pos:btn_close]
+    assert "领域筛选" in btn_html, (
+        "preferences-toggle should contain 领域筛选 text — it IS the label"
+    )
+
+
+def test_preferences_toggle_absent_on_subscribe(client):
+    """No dead button on pages without the preferences panel."""
+    resp = client.get("/subscribe")
+    assert resp.status_code == 200
+    assert 'id="preferences-toggle"' not in resp.text

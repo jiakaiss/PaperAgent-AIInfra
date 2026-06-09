@@ -255,14 +255,21 @@ def subscribe_page(request: Request) -> HTMLResponse:
     templates = request.app.state.templates
     config: AppConfig | None = getattr(request.app.state, "config", None)
     access_enabled = bool(config and config.subscriptions.access.enabled)
+    admin_contact = config.web.admin_contact if config else ""
     return templates.TemplateResponse(
         request=request,
         name="subscribe.html",
         context={
             "all_sub_domains": list(SUB_DOMAINS.keys()),
             "access_enabled": access_enabled,
+            "admin_contact": admin_contact,
         },
     )
+
+
+def _admin_contact_suffix(contact: str) -> str:
+    """Render the parenthetical after 管理员, or '' when no contact configured."""
+    return f"（{contact}）" if contact else ""
 
 
 @router.post("/api/subscribe", response_class=HTMLResponse)
@@ -282,13 +289,14 @@ def subscribe_api(
 
     # Validate global email config before accepting subscription
     config: AppConfig | None = getattr(request.app.state, "config", None)
+    admin_suffix = _admin_contact_suffix(config.web.admin_contact if config else "")
     if config is None or not config.email.enabled:
         return templates.TemplateResponse(
             request=request,
             name="_subscribe_result.html",
             context={
                 "success": False,
-                "error": "系统未配置邮件发送功能，请联系管理员",
+                "error": f"系统未配置邮件发送功能，请联系管理员{admin_suffix}",
             },
         )
 
@@ -299,7 +307,7 @@ def subscribe_api(
             name="_subscribe_result.html",
             context={
                 "success": False,
-                "error": f"邮件配置不完整（缺少 {', '.join(missing)}），请联系管理员",
+                "error": f"邮件配置不完整（缺少 {', '.join(missing)}），请联系管理员{admin_suffix}",
             },
         )
 
@@ -309,7 +317,7 @@ def subscribe_api(
             name="_subscribe_result.html",
             context={
                 "success": False,
-                "error": "订阅需要有效授权码，请联系管理员获取访问权限",
+                "error": f"订阅需要有效授权码，请联系管理员{admin_suffix}获取访问权限",
             },
         )
 
@@ -336,7 +344,7 @@ def subscribe_api(
             name="_subscribe_result.html",
             context={
                 "success": False,
-                "error": "该邮箱已取消订阅，暂不支持直接重新激活，请联系管理员",
+                "error": f"该邮箱已取消订阅，暂不支持直接重新激活，请联系管理员{admin_suffix}",
             },
         )
 
