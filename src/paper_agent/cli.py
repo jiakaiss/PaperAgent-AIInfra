@@ -70,7 +70,12 @@ def run(config: str, dry_run: bool, days_back: int | None, user: tuple[str, ...]
 @cli.command()
 @click.option("--config", "-c", default="config.yaml", help="Config file path")
 @click.option("--user", "-u", multiple=True, help="Run for specific user(s) only")
-def daemon(config: str, user: tuple[str, ...]):
+@click.option(
+    "--log-file",
+    default=None,
+    help="Override config.logging.file (e.g. logs/daemon.log)",
+)
+def daemon(config: str, user: tuple[str, ...], log_file: str | None):
     """Start the scheduler daemon for periodic runs."""
     from paper_agent.config import load_config
 
@@ -80,7 +85,7 @@ def daemon(config: str, user: tuple[str, ...]):
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    setup_logging(cfg.logging.level, cfg.logging.file)
+    setup_logging(cfg.logging.level, log_file or cfg.logging.file)
 
     # Load subscriptions from database
     load_subscriptions_into_config(cfg)
@@ -205,7 +210,12 @@ def stats(config: str, user: str | None):
 @click.option("--config", "-c", default="config.yaml", help="Config file path")
 @click.option("--host", "-h", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
 @click.option("--port", "-p", default=8000, type=int, help="Bind port (default: 8000)")
-def web(config: str, host: str, port: int):
+@click.option(
+    "--log-file",
+    default=None,
+    help="Override config.logging.file (e.g. logs/web.log)",
+)
+def web(config: str, host: str, port: int, log_file: str | None):
     """Launch the web UI server."""
     import uvicorn
 
@@ -217,7 +227,7 @@ def web(config: str, host: str, port: int):
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    setup_logging(cfg.logging.level, cfg.logging.file)
+    setup_logging(cfg.logging.level, log_file or cfg.logging.file)
 
     from paper_agent.web.app import create_app
 

@@ -94,14 +94,15 @@ scripts/start-local.sh web
 # 只启动 daemon（后台查询 + 每日推送，前台运行）
 scripts/start-local.sh daemon
 
-# 后台持久化运行 daemon（推荐生产环境）
-# 日志写入 logs/daemon.log（由 Python FileHandler 维护，不依赖 shell session）
-scripts/daemon.sh start
-scripts/daemon.sh status
-scripts/daemon.sh stop
-scripts/daemon.sh restart
-# 指定 Python 环境
+# 后台持久化运行 daemon 和 web（推荐生产环境，非 Docker）
+# 日志各自写入 logs/daemon.log 和 logs/web.log（由 Python FileHandler 维护，不依赖 shell session）
+scripts/daemon.sh start          # 调度器（拉取 + 评分 + 每日推送）
+scripts/web.sh start             # Web UI
+scripts/daemon.sh status         # 各自支持 start | stop | restart | status
+scripts/web.sh status
+# 指定 Python 环境 / 监听地址
 PYTHON_BIN=/opt/conda/envs/paper_agent/bin/python scripts/daemon.sh start
+HOST=0.0.0.0 PORT=8000 scripts/web.sh start
 
 # 本地检查（ruff + pytest + 可选 JS tests）
 scripts/check.sh
