@@ -155,7 +155,14 @@ class Pipeline:
         logger.info(f"Digest: Filtering for {len(users)} user(s)...")
         results: dict[str, list[ScoredPaper]] = {}
         for user in users:
-            user_papers = self._run_for_user(user, all_scored, dry_run=dry_run)
+            try:
+                user_papers = self._run_for_user(user, all_scored, dry_run=dry_run)
+            except Exception:
+                logger.error(
+                    f"  [{user.display_name or user.user_id}] Failed, skipping",
+                    exc_info=True,
+                )
+                user_papers = []
             results[user.user_id] = user_papers
 
         total_sent = sum(len(v) for v in results.values())
@@ -255,17 +262,26 @@ class Pipeline:
             logger.info(f"  [{display}] [DRY RUN] Would send {len(filtered)} papers")
             self._print_results(display, filtered)
         else:
+            any_success = False
             for notifier in notifiers:
                 logger.info(f"  [{display}] Sending via {notifier.name}...")
                 success = notifier.notify(filtered)
                 if success:
                     logger.info(f"    ✓ {notifier.name} sent")
+                    any_success = True
                 else:
                     logger.error(f"    ✗ {notifier.name} failed")
 
-            # Mark as sent for this user
-            self.db.mark_sent(uid, filtered)
-            logger.info(f"  [{display}] Marked {len(filtered)} papers as sent")
+            if any_success:
+                # Mark as sent only when at least one notifier succeeded,
+                # so failed deliveries can be retried on the next digest.
+                self.db.mark_sent(uid, filtered)
+                logger.info(f"  [{display}] Marked {len(filtered)} papers as sent")
+            else:
+                logger.warning(
+                    f"  [{display}] All notifiers failed; papers NOT marked as sent "
+                    f"(will retry next digest)"
+                )
 
         return filtered
 

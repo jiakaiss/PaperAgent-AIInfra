@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from paper_agent.config import (
     AppConfig,
+    EmailNotifierConfig,
     FetchConfig,
     PromptsConfig,
     ScheduleConfig,
@@ -14,6 +15,7 @@ from paper_agent.config import (
     StorageConfig,
     SubscriptionConfig,
     UserConfig,
+    UserNotifyConfig,
     UserThresholdsConfig,
 )
 from paper_agent.models import Paper, ScoredPaper, ScoreWeights
@@ -864,5 +866,199 @@ def test_pipeline_min_tier_sort_order_is_tier_first(mock_scorer_cls, mock_fetche
         # breakthrough first, despite lower raw score
         assert ordered_ids[0] == "000"
         assert ordered_ids[1] == "001"
+    finally:
+        os.unlink(db_path)
+
+
+# ─── Per-user exception isolation & mark_sent on success only ───
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_digest_continues_after_user_exception(mock_scorer_cls, mock_fetcher_cls):
+    """If one user's digest throws, remaining users are still processed."""
+    mock_fetcher = MagicMock()
+    mock_fetcher.fetch.return_value = [_make_paper("001"), _make_paper("002")]
+    mock_fetcher_cls.return_value = mock_fetcher
+
+    mock_scorer = MagicMock()
+    mock_scorer.score.return_value = [
+        _make_scored_paper("001", tags=("quantization",)),
+        _make_scored_paper("002", tags=("distillation",)),
+    ]
+    mock_scorer_cls.return_value = mock_scorer
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[
+                UserConfig(
+                    user_id="alice",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(min_relevance=6.0, min_quality=5.0, top_n=10),
+                ),
+                UserConfig(
+                    user_id="bob",
+                    subscriptions=SubscriptionConfig(sub_domains=["distillation"]),
+                    thresholds=UserThresholdsConfig(min_relevance=6.0, min_quality=5.0, top_n=10),
+                ),
+                UserConfig(
+                    user_id="carol",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(min_relevance=6.0, min_quality=5.0, top_n=10),
+                ),
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+
+        pipeline = Pipeline(config)
+
+        # Make alice's _run_for_user blow up by sabotaging the DB call
+        original_filter = pipeline.db.filter_unsent_for_user
+        call_count = 0
+
+        def flaky_filter(user_id, ids):
+            nonlocal call_count
+            call_count += 1
+            if user_id == "alice":
+                raise RuntimeError("DB timeout for alice")
+            return original_filter(user_id, ids)
+
+        pipeline.db.filter_unsent_for_user = flaky_filter
+
+        results = pipeline.run(dry_run=True)
+
+        # Alice should be empty (exception caught and logged)
+        assert results["alice"] == []
+
+        # Bob and carol should still get their papers
+        assert len(results["bob"]) == 1
+        assert results["bob"][0].paper.arxiv_id == "002"
+        assert len(results["carol"]) == 1
+        assert results["carol"][0].paper.arxiv_id == "001"
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_mark_sent_only_on_notification_success(mock_scorer_cls, mock_fetcher_cls):
+    """Papers are NOT marked as sent when all notifiers fail, so they can be retried."""
+    mock_fetcher = MagicMock()
+    mock_fetcher.fetch.return_value = [_make_paper("001")]
+    mock_fetcher_cls.return_value = mock_fetcher
+
+    mock_scorer = MagicMock()
+    mock_scorer.score.return_value = [
+        _make_scored_paper("001", tags=("quantization",)),
+    ]
+    mock_scorer_cls.return_value = mock_scorer
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[
+                UserConfig(
+                    user_id="alice",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(min_relevance=6.0, min_quality=5.0, top_n=10),
+                    notify=UserNotifyConfig(
+                        email=EmailNotifierConfig(
+                            enabled=True,
+                            smtp_host="smtp.example.com",
+                            smtp_user="test",
+                            smtp_password="pass",
+                            recipients=["alice@example.com"],
+                        )
+                    ),
+                ),
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+
+        pipeline = Pipeline(config)
+
+        # Make the notifier fail
+        failing_notifier = MagicMock()
+        failing_notifier.name = "email"
+        failing_notifier.notify.return_value = False
+        pipeline.user_notifiers["alice"] = [failing_notifier]
+
+        # Run digest (not dry_run so notifier actually fires)
+        results = pipeline.run(dry_run=False)
+
+        # Alice got the papers in the return value
+        assert len(results["alice"]) == 1
+
+        # But they were NOT marked as sent — still available for next digest
+        unsent = pipeline.db.filter_unsent_for_user("alice", ["001"])
+        assert "001" in unsent
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_mark_sent_on_partial_notifier_success(mock_scorer_cls, mock_fetcher_cls):
+    """If at least one notifier succeeds, papers are marked as sent."""
+    mock_fetcher = MagicMock()
+    mock_fetcher.fetch.return_value = [_make_paper("001")]
+    mock_fetcher_cls.return_value = mock_fetcher
+
+    mock_scorer = MagicMock()
+    mock_scorer.score.return_value = [
+        _make_scored_paper("001", tags=("quantization",)),
+    ]
+    mock_scorer_cls.return_value = mock_scorer
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[
+                UserConfig(
+                    user_id="alice",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(min_relevance=6.0, min_quality=5.0, top_n=10),
+                ),
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+
+        pipeline = Pipeline(config)
+
+        # Two notifiers: one fails, one succeeds
+        fail_notifier = MagicMock()
+        fail_notifier.name = "fail_channel"
+        fail_notifier.notify.return_value = False
+
+        ok_notifier = MagicMock()
+        ok_notifier.name = "ok_channel"
+        ok_notifier.notify.return_value = True
+
+        pipeline.user_notifiers["alice"] = [fail_notifier, ok_notifier]
+
+        results = pipeline.run(dry_run=False)
+
+        # Papers returned
+        assert len(results["alice"]) == 1
+
+        # Marked as sent because at least one notifier succeeded
+        unsent = pipeline.db.filter_unsent_for_user("alice", ["001"])
+        assert "001" not in unsent
     finally:
         os.unlink(db_path)
