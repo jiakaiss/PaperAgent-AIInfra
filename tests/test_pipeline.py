@@ -591,6 +591,78 @@ def test_per_sub_domain_top_n_split_and_dedup(mock_scorer_cls, mock_fetcher_cls)
 
 @patch("paper_agent.pipeline.ArxivFetcher")
 @patch("paper_agent.pipeline.ClaudeScorer")
+def test_per_domain_buckets_skip_already_sent_papers(mock_scorer_cls, mock_fetcher_cls):
+    """Regression: per-domain top-N must allocate slots to UNSENT papers only.
+
+    Old behaviour (pre-2026-06-10 fix): the top-N of each bucket was computed
+    over the full eligible pool, then filter_unsent_for_user was applied last.
+    For a long-time subscriber, the top-N slots were occupied every day by the
+    same high-scoring historical papers — all of which were dropped at the
+    last step, leaving the digest with almost nothing despite a large pool.
+
+    New behaviour: filter_unsent runs before bucketing, so each bucket's
+    top-N is "top-N of what this user hasn't seen yet". A user who has
+    already received the 10 highest-scoring papers should see ranks 11-20
+    on the next run, not an empty digest.
+    """
+    # 30 quant papers, scores 9.0 → 6.1 descending so the order is well-defined.
+    scored = [
+        _make_scored_paper(
+            f"q{i:03d}", relevance=9.0 - i * 0.1, quality=7.0, tags=("quantization",)
+        )
+        for i in range(30)
+    ]
+    mock_scorer_cls.return_value.score.return_value = scored
+    mock_fetcher_cls.return_value.fetch.return_value = [sp.paper for sp in scored]
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=100, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            users=[
+                UserConfig(
+                    user_id="alice",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(
+                        min_relevance=6.0,
+                        min_quality=5.0,
+                        top_n=10,
+                        per_sub_domain_top_n=10,
+                    ),
+                )
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        pipeline = Pipeline(config)
+
+        # Simulate alice having already received the top 10 (q000-q009) in a
+        # previous digest by stamping them into sent_papers directly. This
+        # isolates the test from notifier wiring — we're testing the filter
+        # order in _run_for_user, not the notify-then-mark_sent flow.
+        pipeline.db.mark_sent(
+            "alice",
+            [sp for sp in scored if sp.paper.arxiv_id in {f"q{i:03d}" for i in range(10)}],
+        )
+
+        # With the fix, the bucket allocates its 10 slots to ranks 11-20
+        # (q010-q019). With the old buggy code the bucket would pick
+        # q000-q009 again and then strip them all at the last step,
+        # producing an empty digest.
+        results = pipeline.run(dry_run=True)
+        ids = [sp.paper.arxiv_id for sp in results["alice"]]
+        assert ids == [f"q{i:03d}" for i in range(10, 20)], (
+            f"Expected ranks 11-20 (q010-q019), got {ids}. "
+            "Old bug: would return [] because top-N was taken before unsent filter."
+        )
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
 def test_per_sub_domain_respects_overall_cap(mock_scorer_cls, mock_fetcher_cls):
     """top_n caps the dedup'd union even when per-domain buckets sum higher."""
     sub_domains = [
