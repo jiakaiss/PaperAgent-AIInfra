@@ -204,33 +204,38 @@ class Pipeline:
         min_tier_rank = tier_rank(user.thresholds.min_tier)
         weights = self.score_weights
 
-        # Tier filter: exclude papers whose impact_tier rank exceeds the
-        # user's configured minimum (lower rank = higher priority).
-        tier_filtered = [sp for sp in all_scored if tier_rank(sp.impact_tier) <= min_tier_rank]
+        # Tier + score thresholds first — defines the eligibility pool.
+        eligible = [
+            sp
+            for sp in all_scored
+            if tier_rank(sp.impact_tier) <= min_tier_rank
+            and sp.relevance_score >= min_rel
+            and sp.quality_score >= min_qual
+        ]
+
+        # Drop already-sent papers BEFORE bucketing/top-N. Doing this last
+        # (the previous design) let high-scoring historical papers occupy the
+        # per-domain top-N slots every day and then get filtered out, leaving
+        # the digest with only a handful of new papers regardless of how big
+        # per_sub_domain_top_n was. Filtering here means buckets allocate
+        # their N slots to papers the user has never seen.
+        if eligible:
+            eligible_ids = [sp.paper.arxiv_id for sp in eligible]
+            unsent_ids = set(self.db.filter_unsent_for_user(uid, eligible_ids))
+            eligible = [sp for sp in eligible if sp.paper.arxiv_id in unsent_ids]
 
         if "all" in sub_domains:
-            # "all" subscribers: filter by thresholds and take user-level top_n.
-            # Per-domain limit doesn't apply because there's no sub-domain to bucket by.
-            filtered = [
-                sp
-                for sp in tier_filtered
-                if sp.relevance_score >= min_rel and sp.quality_score >= min_qual
-            ]
-            filtered = sort_by_score(filtered, weights=weights)[: user.thresholds.top_n]
+            # "all" subscribers: no per-domain bucketing — just sort and cap.
+            filtered = sort_by_score(eligible, weights=weights)[: user.thresholds.top_n]
         else:
-            # Per-sub-domain top-N then merge + dedup, then apply user-level top_n as cap.
+            # Per-sub-domain top-N (over unsent only), then merge + dedup,
+            # then apply user-level top_n as cap.
             per_domain_top = user.thresholds.per_sub_domain_top_n
             bucket_sizes: list[str] = []
             seen: set[str] = set()
             merged: list = []
             for sd in sub_domains:
-                bucket = [
-                    sp
-                    for sp in tier_filtered
-                    if sd in sp.sub_domain_tags
-                    and sp.relevance_score >= min_rel
-                    and sp.quality_score >= min_qual
-                ]
+                bucket = [sp for sp in eligible if sd in sp.sub_domain_tags]
                 bucket = sort_by_score(bucket, weights=weights)[:per_domain_top]
                 bucket_sizes.append(f"{sd}={len(bucket)}")
                 for sp in bucket:
@@ -240,11 +245,6 @@ class Pipeline:
             # Re-sort the deduped union and apply the overall cap.
             filtered = sort_by_score(merged, weights=weights)[: user.thresholds.top_n]
             logger.info(f"  [{display}] per-domain buckets: {', '.join(bucket_sizes)}")
-
-        # Dedup per user
-        ids = [sp.paper.arxiv_id for sp in filtered]
-        new_ids = set(self.db.filter_unsent_for_user(uid, ids))
-        filtered = [sp for sp in filtered if sp.paper.arxiv_id in new_ids]
 
         if not filtered:
             logger.info(f"  [{display}] No new papers to send")
