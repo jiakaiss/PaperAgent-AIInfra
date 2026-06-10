@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sys
 from datetime import datetime
@@ -12,24 +13,69 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from paper_agent.config import AppConfig
-from paper_agent.daemon_heartbeat import heartbeat_path, write_heartbeat
+from paper_agent.daemon_heartbeat import (
+    heartbeat_path,
+    pid_is_alive,
+    read_heartbeat,
+    write_heartbeat,
+)
 from paper_agent.pipeline import Pipeline
 
 logger = logging.getLogger(__name__)
 
 
-def start_daemon(config: AppConfig, user_ids: list[str] | None = None) -> None:
+class DaemonAlreadyRunningError(RuntimeError):
+    """Raised when start_daemon detects another live daemon for the same DB.
+
+    Carries the existing PID so the caller (CLI) can render a useful message.
+    Without this guard, two daemons would happily share the same DB and each
+    fire the digest cron at 09:00, sending every subscriber two identical
+    emails (one per process). See logs/daemon.log on 2026-06-10 for the
+    incident that motivated this check.
+    """
+
+    def __init__(self, pid: int, started_at: str | None):
+        self.pid = pid
+        self.started_at = started_at
+        super().__init__(
+            f"Another paper-agent daemon is already running (PID {pid}, "
+            f"started {started_at or 'unknown'}). Stop it first or pass --force."
+        )
+
+
+def start_daemon(
+    config: AppConfig,
+    user_ids: list[str] | None = None,
+    *,
+    force: bool = False,
+) -> None:
     """Start the scheduler daemon.
 
     Args:
         config: Application config
         user_ids: Optional list of user IDs to run for (None = all users)
+        force: Skip the duplicate-daemon preflight check. Use only when the
+            heartbeat file is known to be stale and the OS-level PID check
+            is somehow wrong (rare — prefer killing the old process instead).
     """
+    db_path = config.storage.db_path
+    if not force:
+        hb = read_heartbeat(db_path)
+        if hb is not None:
+            other_pid = int(hb.get("pid", 0))
+            last_event = hb.get("last_event")
+            # last_event == "shutdown" means the previous daemon exited
+            # cleanly via SIGINT/SIGTERM — the heartbeat is a tombstone,
+            # not a liveness signal, so don't treat it as a conflict even
+            # if the PID happens to have been reused by something else.
+            if last_event != "shutdown" and other_pid > 0 and other_pid != os.getpid():
+                if pid_is_alive(other_pid):
+                    raise DaemonAlreadyRunningError(other_pid, hb.get("started_at"))
+
     scheduler = BlockingScheduler(timezone=config.schedule.timezone)
 
     pipeline = Pipeline(config)
 
-    db_path = config.storage.db_path
     started_at = datetime.now().isoformat(timespec="seconds")
     # Initial heartbeat so the admin dashboard sees "running" the moment
     # the daemon starts, before the first scheduled job fires.
