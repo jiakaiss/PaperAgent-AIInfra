@@ -75,7 +75,13 @@ def run(config: str, dry_run: bool, days_back: int | None, user: tuple[str, ...]
     default=None,
     help="Override config.logging.file (e.g. logs/daemon.log)",
 )
-def daemon(config: str, user: tuple[str, ...], log_file: str | None):
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Start even if another daemon appears to be running for this DB.",
+)
+def daemon(config: str, user: tuple[str, ...], log_file: str | None, force: bool):
     """Start the scheduler daemon for periodic runs."""
     from paper_agent.config import load_config
 
@@ -98,10 +104,18 @@ def daemon(config: str, user: tuple[str, ...], log_file: str | None):
         click.echo("Error: No users configured.", err=True)
         sys.exit(1)
 
-    from paper_agent.scheduler import start_daemon
+    from paper_agent.scheduler import DaemonAlreadyRunningError, start_daemon
 
     user_ids = list(user) if user else None
-    start_daemon(cfg, user_ids=user_ids)
+    try:
+        start_daemon(cfg, user_ids=user_ids, force=force)
+    except DaemonAlreadyRunningError as e:
+        click.echo(f"Error: {e}", err=True)
+        click.echo(
+            "  Tip: 'scripts/daemon.sh stop' (or kill the PID), or re-run with --force.",
+            err=True,
+        )
+        sys.exit(1)
 
 
 @cli.command()
