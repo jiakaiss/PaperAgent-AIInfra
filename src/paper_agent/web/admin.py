@@ -333,9 +333,21 @@ def admin_system(
     # Build a hand-picked, sensitive-free config summary. Never pass the raw
     # config object to a template — that would risk leaking secrets via
     # accidental ``{{ config }}`` rendering.
+    if config.schedule.ingest_hours:
+        ingest_schedule_desc = (
+            "每天 "
+            + ", ".join(
+                f"{h:02d}:{config.schedule.ingest_minute:02d}"
+                for h in sorted(config.schedule.ingest_hours)
+            )
+        )
+    else:
+        ingest_schedule_desc = f"每 {config.schedule.ingest_interval_minutes} 分钟"
+
     cfg_summary = {
         "scoring_model": config.scoring.model,
         "ingest_interval_minutes": config.schedule.ingest_interval_minutes,
+        "ingest_schedule_desc": ingest_schedule_desc,
         "digest_time": f"{config.schedule.digest_hour:02d}:{config.schedule.digest_minute:02d}",
         "timezone": config.schedule.timezone,
         "smtp_host": config.email.smtp_host if config.email.enabled else "(disabled)",
@@ -350,7 +362,7 @@ def admin_system(
     # actually land in the cache.
     daemon = assess_health(
         config.storage.db_path,
-        config.schedule.ingest_interval_minutes,
+        config.schedule.effective_ingest_interval_minutes,
     )
     daemon["uptime_human"] = (
         _format_duration(

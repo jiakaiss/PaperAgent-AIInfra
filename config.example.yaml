@@ -135,8 +135,13 @@ web:
 # ─── 定时任务配置（全局） ───
 schedule:
   enabled: true
-  # 后台每 6 小时查询/评分/入库；用户推送仍每天 9 点只从缓存发送一次。
-  ingest_interval_minutes: 360   # 后台查询频率；越高 arXiv/API 压力越大
+  # 后台 ingest 调度有两种模式（二选一）：
+  #   - cron 模式（推荐）：设置 ingest_hours，每天在指定小时精确触发
+  #   - interval 模式：留空 ingest_hours，按 ingest_interval_minutes 周期触发
+  # 用户推送（digest）仍每天 digest_hour:digest_minute 只从缓存发送一次。
+  ingest_interval_minutes: 360   # interval 模式下的查询周期；被 ingest_hours 覆盖时忽略
+  ingest_hours: [6, 18]          # cron 模式：每天 6:00 和 18:00 各拉一次；置 null 或省略则走 interval
+  ingest_minute: 0               # cron 模式下统一的分钟
   digest_hour: 9                 # 每日用户推送小时
   digest_minute: 0               # 每日用户推送分钟
   timezone: Asia/Shanghai

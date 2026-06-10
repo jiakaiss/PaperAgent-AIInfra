@@ -489,6 +489,81 @@ def test_schedule_config_separate_ingest_digest_loads_from_yaml():
         os.unlink(config_path)
 
 
+def test_schedule_config_ingest_hours_cron_mode():
+    """Setting ingest_hours switches to cron-style ingest scheduling."""
+    from paper_agent.config import ScheduleConfig
+
+    cfg = ScheduleConfig(ingest_hours=[6, 18], ingest_minute=0)
+    assert cfg.ingest_hours == [6, 18]
+    assert cfg.ingest_minute == 0
+    # 6→18 gap is 12h, 18→6 wrap is also 12h → effective interval 720 min.
+    # Heartbeat staleness uses this so cron-mode daemons don't get flagged
+    # mid-gap as "wedged".
+    assert cfg.effective_ingest_interval_minutes == 720
+
+
+def test_schedule_config_effective_interval_falls_back_when_unset():
+    """Without ingest_hours, effective interval is just ingest_interval_minutes."""
+    from paper_agent.config import ScheduleConfig
+
+    cfg = ScheduleConfig(ingest_interval_minutes=360)
+    assert cfg.ingest_hours is None
+    assert cfg.effective_ingest_interval_minutes == 360
+
+
+def test_schedule_config_effective_interval_takes_widest_gap():
+    """For uneven ingest_hours the effective interval tracks the longest gap."""
+    from paper_agent.config import ScheduleConfig
+
+    # 6→12 = 6h, 12→18 = 6h, 18→6 wrap = 12h → 12h wins
+    cfg = ScheduleConfig(ingest_hours=[6, 12, 18])
+    assert cfg.effective_ingest_interval_minutes == 720
+
+    # Single hour means once-per-day → 24h
+    cfg = ScheduleConfig(ingest_hours=[3])
+    assert cfg.effective_ingest_interval_minutes == 24 * 60
+
+
+def test_schedule_config_rejects_invalid_ingest_hours():
+    """ingest_hours validation covers range, emptiness, and duplicates."""
+    from paper_agent.config import ScheduleConfig
+
+    with pytest.raises(ValueError, match="ingest_hours"):
+        ScheduleConfig(ingest_hours=[6, 25])
+    with pytest.raises(ValueError, match="ingest_hours"):
+        ScheduleConfig(ingest_hours=[])
+    with pytest.raises(ValueError, match="ingest_hours"):
+        ScheduleConfig(ingest_hours=[6, 6])
+    with pytest.raises(ValueError, match="ingest_minute"):
+        ScheduleConfig(ingest_minute=60)
+
+
+def test_schedule_config_ingest_hours_round_trip_yaml():
+    """ingest_hours and ingest_minute survive a YAML load."""
+    data = {
+        "schedule": {
+            "enabled": True,
+            "ingest_hours": [6, 18],
+            "ingest_minute": 0,
+            "digest_hour": 9,
+            "digest_minute": 0,
+        },
+        "users": [],
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(data, f)
+        config_path = f.name
+
+    try:
+        cfg = load_config(config_path)
+        assert cfg.schedule.ingest_hours == [6, 18]
+        assert cfg.schedule.ingest_minute == 0
+        assert cfg.schedule.effective_ingest_interval_minutes == 720
+    finally:
+        os.unlink(config_path)
+
+
 def test_web_admin_contact_default_empty():
     """Default WebConfig has admin_contact = '' so no parenthetical leaks."""
     cfg = AppConfig()

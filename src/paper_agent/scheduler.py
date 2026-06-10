@@ -58,9 +58,23 @@ def start_daemon(config: AppConfig, user_ids: list[str] | None = None) -> None:
         finally:
             write_heartbeat(db_path, started_at=started_at, last_event="digest")
 
+    if config.schedule.ingest_hours:
+        ingest_hours_csv = ",".join(str(h) for h in sorted(config.schedule.ingest_hours))
+        ingest_trigger = CronTrigger(
+            hour=ingest_hours_csv,
+            minute=config.schedule.ingest_minute,
+        )
+        ingest_desc = (
+            f"at {ingest_hours_csv}:{config.schedule.ingest_minute:02d} "
+            f"({config.schedule.timezone})"
+        )
+    else:
+        ingest_trigger = IntervalTrigger(minutes=config.schedule.ingest_interval_minutes)
+        ingest_desc = f"every {config.schedule.ingest_interval_minutes} minute(s)"
+
     scheduler.add_job(
         run_ingest,
-        trigger=IntervalTrigger(minutes=config.schedule.ingest_interval_minutes),
+        trigger=ingest_trigger,
         id="paper_ingest",
         name="AI Infra Paper Ingest",
         misfire_grace_time=3600,
@@ -95,7 +109,7 @@ def start_daemon(config: AppConfig, user_ids: list[str] | None = None) -> None:
 
     target = f"users: {', '.join(user_ids)}" if user_ids else "all users"
     logger.info(
-        f"Daemon started. Ingest every {config.schedule.ingest_interval_minutes} minute(s); "
+        f"Daemon started. Ingest {ingest_desc}; "
         f"digest daily at {config.schedule.digest_hour:02d}:{config.schedule.digest_minute:02d} "
         f"({config.schedule.timezone}) for {target}"
     )

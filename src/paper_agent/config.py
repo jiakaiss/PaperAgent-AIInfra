@@ -311,6 +311,11 @@ class ScheduleConfig(BaseModel):
     cron_minute: int = 0
     interval_minutes: int = 24 * 60
     ingest_interval_minutes: int = 360
+    # When set, ingest runs at these hour-of-day values (cron mode) and
+    # ``ingest_interval_minutes`` is ignored. None falls back to the legacy
+    # interval-based scheduling so existing configs keep working unchanged.
+    ingest_hours: list[int] | None = None
+    ingest_minute: int = 0
     digest_hour: int = 9
     digest_minute: int = 0
     timezone: str = "Asia/Shanghai"
@@ -321,11 +326,41 @@ class ScheduleConfig(BaseModel):
             raise ValueError("schedule interval_minutes must be positive when mode='interval'")
         if self.ingest_interval_minutes <= 0:
             raise ValueError("schedule ingest_interval_minutes must be positive")
+        if self.ingest_hours is not None:
+            if not self.ingest_hours:
+                raise ValueError("schedule ingest_hours must be non-empty when set")
+            for h in self.ingest_hours:
+                if not 0 <= h <= 23:
+                    raise ValueError(f"schedule ingest_hours value {h} must be between 0 and 23")
+            if len(set(self.ingest_hours)) != len(self.ingest_hours):
+                raise ValueError("schedule ingest_hours must not contain duplicates")
+        if not 0 <= self.ingest_minute <= 59:
+            raise ValueError("schedule ingest_minute must be between 0 and 59")
         if not 0 <= self.digest_hour <= 23:
             raise ValueError("schedule digest_hour must be between 0 and 23")
         if not 0 <= self.digest_minute <= 59:
             raise ValueError("schedule digest_minute must be between 0 and 59")
         return self
+
+    @property
+    def effective_ingest_interval_minutes(self) -> int:
+        """Largest gap between two consecutive ingests, in minutes.
+
+        For interval mode this is just ``ingest_interval_minutes``. For cron
+        mode (``ingest_hours`` set) this is the longest stretch between
+        consecutive scheduled hours, wrapping around midnight — e.g.
+        ``[6, 18]`` → 12h gap, ``[6, 12, 18]`` → 12h gap (longest is 18→6).
+        Used by the heartbeat staleness check so cron schedules don't get
+        flagged "stale" mid-gap.
+        """
+        if not self.ingest_hours:
+            return self.ingest_interval_minutes
+        hours = sorted(self.ingest_hours)
+        gaps = [
+            (hours[(i + 1) % len(hours)] - hours[i]) % 24 or 24
+            for i in range(len(hours))
+        ]
+        return max(gaps) * 60
 
 
 class StorageConfig(BaseModel):
