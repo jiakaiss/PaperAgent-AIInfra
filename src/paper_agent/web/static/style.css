@@ -150,6 +150,13 @@ code {
     box-shadow: var(--shadow-sm);
     position: sticky;
     top: 80px;
+    /* When sticky engages (long paper list on the right), the panel is pinned
+       to the viewport. Without a viewport-bounded max-height + overflow, the
+       lower checkboxes get pushed below the viewport and are unreachable —
+       you can scroll the page but the pinned panel stays put. Cap height to
+       the visible area below the sticky offset (80px) minus breathing room. */
+    max-height: calc(100vh - 96px);
+    overflow-y: auto;
 }
 
 .preferences-panel[hidden] { display: none; }
@@ -181,8 +188,9 @@ code {
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
-    max-height: 400px;
-    overflow-y: auto;
+    /* No inner max-height / overflow here: the parent .preferences-panel
+       already scrolls when content exceeds the viewport, so a nested
+       scrollbar would just create a confusing scroll-within-scroll. */
 }
 
 .checkbox-label {
