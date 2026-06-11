@@ -14,9 +14,8 @@
         <section class="subscribe-rules" aria-label="订阅规则">
             <h2 class="subscribe-rules-title">订阅规则</h2>
             <ul class="subscribe-rules-list">
-                {# 修改推送时间前请同步 config.schedule.digest_hour / digest_minute #}
-                <li>每天 <strong>09:00（北京时间）</strong>从最新论文中筛选一份个性化摘要发送到您的邮箱。</li>
-                <li>目前仅支持下方列出的 14 个标准研究方向；如需新增类别，请<strong>联系管理员{% if admin_contact %}（{{ admin_contact }}）{% endif %}</strong>添加。</li>
+                <li>每天 <strong>{{ digest_time }}（北京时间）</strong>从最新论文中筛选一份个性化摘要发送到您的邮箱。</li>
+                <li>目前仅支持下方列出的 {{ sub_domain_count }} 个标准研究方向；如需新增类别，请<strong>联系管理员{% if admin_contact %}（{{ admin_contact }}）{% endif %}</strong>添加。</li>
             </ul>
         </section>
 

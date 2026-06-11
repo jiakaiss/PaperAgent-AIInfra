@@ -256,13 +256,23 @@ def subscribe_page(request: Request) -> HTMLResponse:
     config: AppConfig | None = getattr(request.app.state, "config", None)
     access_enabled = bool(config and config.subscriptions.access.enabled)
     admin_contact = config.web.admin_contact if config else ""
+    # Surface the configured digest time so the UI doesn't lie when the
+    # schedule is changed. Fall back to "--:--" when config is unavailable
+    # (test rigs, dev shells).
+    digest_time = (
+        f"{config.schedule.digest_hour:02d}:{config.schedule.digest_minute:02d}"
+        if config
+        else "--:--"
+    )
     return templates.TemplateResponse(
         request=request,
         name="subscribe.html",
         context={
             "all_sub_domains": list(SUB_DOMAINS.keys()),
+            "sub_domain_count": len(SUB_DOMAINS),
             "access_enabled": access_enabled,
             "admin_contact": admin_contact,
+            "digest_time": digest_time,
         },
     )
 

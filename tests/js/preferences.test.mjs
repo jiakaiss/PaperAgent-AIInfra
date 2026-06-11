@@ -20,7 +20,7 @@ const PREFS_SRC = readFileSync(
     "utf-8",
 );
 
-/** Build a fake DOM with N chip elements and 14 checkboxes, then eval preferences.js. */
+/** Build a fake DOM with N chip elements and 15 checkboxes, then eval preferences.js. */
 function makeEnv(opts = {}) {
     const {
         initialPrefs = null,

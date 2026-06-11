@@ -166,6 +166,12 @@ SUB_DOMAIN_DESCRIPTIONS = """
 - `memory_optimization`: Memory optimization, activation/gradient checkpointing, offloading
 - `communication`: All-reduce, all-gather, NCCL, communication-efficient training
 - `scheduling`: GPU scheduling, cluster management, job scheduling, resource allocation
+- `diffusion`: Diffusion / flow-matching models for image & video generation —
+  both **algorithm-side** (DiT, flow matching, consistency models, DPM-Solver,
+  step distillation, rectified flow, new samplers, new architectures) and
+  **system-side** (diffusion serving, quantization, KV-cache-style caching,
+  inference acceleration, video diffusion training). Algorithmic advances that
+  reduce sampling steps or memory footprint count as infra-relevant.
 """
 
 SYSTEM_PROMPT = f"""You are an expert reviewer specializing in AI Infrastructure. Your task
@@ -183,6 +189,12 @@ is to evaluate academic papers for their relevance to AI Infra and overall quali
 - KV cache management and speculative decoding
 - Mixture-of-experts systems
 - LLM training infrastructure at scale
+- Diffusion / video generation models — both algorithm-side advances
+  (samplers, step distillation, consistency models, new architectures like
+  DiT / flow matching) and system-side work (serving, quantization, caching,
+  inference acceleration). Algorithmic work that materially reduces sampling
+  steps, memory, or compute counts as infra-relevant — do NOT treat it as
+  off-topic.
 
 {SUB_DOMAIN_DESCRIPTIONS}
 
