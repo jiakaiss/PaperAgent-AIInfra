@@ -253,9 +253,9 @@ def test_get_sub_domain_counts_empty_db():
     try:
         db = PaperDatabase(db_path)
         counts = db.get_sub_domain_counts()
-        # All 14 sub-domains present, all zero
+        # All sub-domains present, all zero
         assert all(v == 0 for v in counts.values())
-        assert len(counts) == 14
+        assert len(counts) == 15
     finally:
         os.unlink(db_path)
 

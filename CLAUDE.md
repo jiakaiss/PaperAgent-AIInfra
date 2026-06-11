@@ -73,11 +73,11 @@ Both tracks dedup by `arxiv_id`; Track-1 records win on conflict so keyword prov
 
 ### Sub-Domain Taxonomy (`models.py`)
 
-14 standard sub-domains, each with associated arXiv keywords:
+15 standard sub-domains, each with associated arXiv keywords:
 ```
 quantization, distillation, pruning, sparsity, distributed_training,
 parallelism, serving, speculative_decoding, kv_cache, moe, compiler,
-memory_optimization, communication, scheduling
+memory_optimization, communication, scheduling, diffusion
 ```
 
 `SUB_DOMAINS` dict maps each sub-domain to its keyword list. The scorer emits 1-3 `sub_domain_tags` per paper.
