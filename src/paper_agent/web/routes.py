@@ -121,6 +121,7 @@ def _compute_page_context(
     page: int,
     page_size: int = PAGE_SIZE,
     tiers: set[str] | None = None,
+    older: str | None = None,
 ) -> dict:
     """Build the template context dict for the paper list + pagination."""
     total = db.count_papers(
@@ -129,6 +130,7 @@ def _compute_page_context(
         published_after=published_after,
         min_quality=min_quality,
         tiers=tiers,
+        older=older,
     )
     total_pages = max(1, math.ceil(total / page_size))
     page = max(1, min(page, total_pages))
@@ -139,6 +141,7 @@ def _compute_page_context(
         published_after=published_after,
         min_quality=min_quality,
         tiers=tiers,
+        older=older,
         limit=page_size,
         offset=offset,
     )
@@ -152,6 +155,17 @@ def _compute_page_context(
         "has_prev": page > 1,
         "has_next": page < total_pages,
     }
+
+
+# ?older= filter: "only" / "include" (default) / "exclude". Anything else
+# is normalized to None which the storage layer treats as "include".
+_VALID_OLDER = {"only", "include", "exclude"}
+
+
+def _validate_older(value: str | None) -> str | None:
+    if value in _VALID_OLDER:
+        return value
+    return None
 
 
 @router.get("/health")
@@ -169,6 +183,7 @@ def index(
     tier: list[str] | None = Query(None),
     q: str | None = Query(None),
     since: str | None = Query(None),
+    older: str | None = Query(None),
     page: int = Query(1, ge=1),
 ) -> HTMLResponse:
     """Full page: paper list with chrome."""
@@ -188,10 +203,18 @@ def index(
 
     search = q.strip() if q else None
     published_after = _parse_since(since)
+    older_filter = _validate_older(older)
     config: AppConfig | None = getattr(request.app.state, "config", None)
     min_quality = config.web.min_quality if config else None
     list_ctx = _compute_page_context(
-        db, sub_domain_set, search, published_after, min_quality, page, tiers=active_tiers
+        db,
+        sub_domain_set,
+        search,
+        published_after,
+        min_quality,
+        page,
+        tiers=active_tiers,
+        older=older_filter,
     )
     sub_domain_counts = db.get_sub_domain_counts()
 
@@ -204,6 +227,7 @@ def index(
             "active_tiers": sorted(active_tiers),
             "search": search or "",
             "since": since,
+            "older": older_filter,
             **list_ctx,
             "sub_domain_counts": sub_domain_counts,
             "all_sub_domains": list(SUB_DOMAINS.keys()),
@@ -219,6 +243,7 @@ def paper_list_fragment(
     tier: list[str] | None = Query(None),
     q: str | None = Query(None),
     since: str | None = Query(None),
+    older: str | None = Query(None),
     page: int = Query(1, ge=1),
 ) -> HTMLResponse:
     """HTMX partial: just the paper list + pagination."""
@@ -229,10 +254,18 @@ def paper_list_fragment(
     active_tiers = _resolve_tiers(tier)
     search = q.strip() if q else None
     published_after = _parse_since(since)
+    older_filter = _validate_older(older)
     config: AppConfig | None = getattr(request.app.state, "config", None)
     min_quality = config.web.min_quality if config else None
     list_ctx = _compute_page_context(
-        db, sub_domain_set, search, published_after, min_quality, page, tiers=active_tiers
+        db,
+        sub_domain_set,
+        search,
+        published_after,
+        min_quality,
+        page,
+        tiers=active_tiers,
+        older=older_filter,
     )
 
     return templates.TemplateResponse(
@@ -244,7 +277,8 @@ def paper_list_fragment(
             "active_sub_domains": active_tags,
             "active_tiers": sorted(active_tiers),
             "since": since,
-            "has_filters": bool(active_tags or search or published_after),
+            "older": older_filter,
+            "has_filters": bool(active_tags or search or published_after or older_filter),
         },
     )
 

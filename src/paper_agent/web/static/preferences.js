@@ -10,8 +10,9 @@
     "use strict";
 
     const STORAGE_KEY = "paper_agent_prefs";
-    const DEFAULT_PREFS = { mode: "all", subDomains: [], minTier: "solid" };
+    const DEFAULT_PREFS = { mode: "all", subDomains: [], minTier: "solid", older: "include" };
     const VALID_TIERS = ["breakthrough", "solid", "incremental"];
+    const VALID_OLDER = ["only", "include", "exclude"];
 
     /** Read the list of valid sub-domain keys from the server-injected context. */
     function getValidSubDomains() {
@@ -42,7 +43,10 @@
             const minTier = VALID_TIERS.includes(parsed.minTier)
                 ? parsed.minTier
                 : DEFAULT_PREFS.minTier;
-            return { mode, subDomains, minTier };
+            const older = VALID_OLDER.includes(parsed.older)
+                ? parsed.older
+                : DEFAULT_PREFS.older;
+            return { mode, subDomains, minTier, older };
         } catch {
             return _resetToDefaults();
         }
@@ -133,6 +137,7 @@
         _syncToggleButton(p.subDomains);
         _syncTimeChips(_currentSince());
         _syncMinTierControl(p.minTier);
+        _syncOlderControl(p.older);
     }
 
     function _commitPrefs(prefs) {
@@ -197,6 +202,22 @@
         _commitPrefs(prefs);
     }
 
+    /** Set the older-works filter (only/include/exclude), persist, refresh. */
+    function setOlder(value) {
+        if (!VALID_OLDER.includes(value)) return;
+        const prefs = getPrefs();
+        prefs.older = value;
+        _commitPrefs(prefs);
+    }
+
+    /** Sync the older-works radio buttons to current preference. */
+    function _syncOlderControl(older) {
+        VALID_OLDER.forEach(function (v) {
+            const radio = document.getElementById("older-" + v);
+            if (radio) radio.checked = (v === older);
+        });
+    }
+
     /**
      * Translate the stored minTier into the set of `tier=` query params the
      * server expects. The server treats DEFAULT_TIERS = {breakthrough, solid}
@@ -245,6 +266,10 @@
         }
         // Append tier params based on minTier preference.
         _tierParams(prefs.minTier).forEach((t) => params.append("tier", t));
+        // Older-works filter: only emit param when not the default ("include").
+        if (prefs.older && prefs.older !== "include") {
+            params.set("older", prefs.older);
+        }
         if (opts.search) params.set("q", opts.search);
         const since = _currentSince();
         if (since) params.set("since", since);
@@ -337,6 +362,7 @@
         toggleAllSubDomains,
         setSince,
         setMinTier,
+        setOlder,
         buildQueryString,
         refreshPaperList,
         applyPrefsToUrl,

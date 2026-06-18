@@ -47,6 +47,27 @@
         </div>
 
         <div class="preferences-section">
+            <h3>重要老作 (older works)</h3>
+            <div class="mode-toggle older-toggle">
+                <label title="同时显示新论文和高引用老论文（默认）">
+                    <input type="radio" name="older" id="older-include"
+                           onchange="PaperAgentPrefs.setOlder('include')">
+                    全部（默认）
+                </label>
+                <label title="只显示由引用驱动浮现的高引老论文">
+                    <input type="radio" name="older" id="older-only"
+                           onchange="PaperAgentPrefs.setOlder('only')">
+                    仅老作
+                </label>
+                <label title="隐藏老作，只看 arXiv 新论文">
+                    <input type="radio" name="older" id="older-exclude"
+                           onchange="PaperAgentPrefs.setOlder('exclude')">
+                    仅新论文
+                </label>
+            </div>
+        </div>
+
+        <div class="preferences-section">
             <h3>关注领域 (sub-domain)</h3>
             <div class="sub-domain-bulk-actions">
                 <button type="button" class="btn btn-sm" id="sub-domain-toggle"

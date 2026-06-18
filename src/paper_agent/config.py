@@ -153,15 +153,20 @@ class ScoringConfig(BaseModel):
     abstract_max_length: int = 800
     relevance_weight: float = 0.6
     quality_weight: float = 0.4
+    # Citation weight is added by the citation-aware-scoring change. Default
+    # 0.0 preserves pre-change behavior bit-for-bit; the citation tiebreaker
+    # in sort_by_score only activates when this is > 0 AND citations.enabled.
+    citation_weight: float = 0.0
     prompts: PromptsConfig = Field(default_factory=PromptsConfig)
 
     @model_validator(mode="after")
     def _check_weights_sum(self) -> ScoringConfig:
-        total = self.relevance_weight + self.quality_weight
+        total = self.relevance_weight + self.quality_weight + self.citation_weight
         if abs(total - 1.0) > 0.01:
             logger.warning(
                 f"ScoringConfig: relevance_weight ({self.relevance_weight}) + "
-                f"quality_weight ({self.quality_weight}) = {total}, "
+                f"quality_weight ({self.quality_weight}) + "
+                f"citation_weight ({self.citation_weight}) = {total}, "
                 f"expected ~1.0"
             )
         return self
@@ -218,6 +223,11 @@ class UserThresholdsConfig(BaseModel):
     # page. Set to "incremental" to include everything, "breakthrough" to
     # restrict to top-tier papers only.
     min_tier: Literal["breakthrough", "solid", "incremental"] = "solid"
+    # Older-works delivery (citation-aware-scoring change). Default 0 keeps
+    # the older-works section hidden from existing users until the operator
+    # opts in via the global ThresholdsConfig.
+    older_works_per_digest: int = 0
+    min_citations_for_older_works: int = 100
 
     @model_validator(mode="after")
     def _check_positive_limits(self) -> UserThresholdsConfig:
@@ -225,6 +235,10 @@ class UserThresholdsConfig(BaseModel):
             raise ValueError("thresholds top_n must be positive")
         if self.per_sub_domain_top_n <= 0:
             raise ValueError("thresholds per_sub_domain_top_n must be positive")
+        if self.older_works_per_digest < 0:
+            raise ValueError("thresholds older_works_per_digest must be non-negative")
+        if self.min_citations_for_older_works < 0:
+            raise ValueError("thresholds min_citations_for_older_works must be non-negative")
         return self
 
 
@@ -356,10 +370,7 @@ class ScheduleConfig(BaseModel):
         if not self.ingest_hours:
             return self.ingest_interval_minutes
         hours = sorted(self.ingest_hours)
-        gaps = [
-            (hours[(i + 1) % len(hours)] - hours[i]) % 24 or 24
-            for i in range(len(hours))
-        ]
+        gaps = [(hours[(i + 1) % len(hours)] - hours[i]) % 24 or 24 for i in range(len(hours))]
         return max(gaps) * 60
 
 
@@ -380,6 +391,10 @@ class ThresholdsConfig(BaseModel):
     top_n: int = 10
     per_sub_domain_top_n: int = 20
     min_tier: Literal["breakthrough", "solid", "incremental"] = "solid"
+    # Older-works track (citation-aware-scoring change). Default 0 disables
+    # the older-works section in every digest, keeping pre-change behavior.
+    older_works_per_digest: int = 0
+    min_citations_for_older_works: int = 100
 
     @model_validator(mode="after")
     def _check_positive_limits(self) -> ThresholdsConfig:
@@ -387,12 +402,128 @@ class ThresholdsConfig(BaseModel):
             raise ValueError("thresholds top_n must be positive")
         if self.per_sub_domain_top_n <= 0:
             raise ValueError("thresholds per_sub_domain_top_n must be positive")
+        if self.older_works_per_digest < 0:
+            raise ValueError("thresholds older_works_per_digest must be non-negative")
+        if self.min_citations_for_older_works < 0:
+            raise ValueError("thresholds min_citations_for_older_works must be non-negative")
         return self
 
 
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     file: str | None = None
+
+
+class CitationsConfig(BaseModel):
+    """Citation-fetching, dynamic re-scoring, and older-works discovery.
+
+    Defaults preserve pre-change behavior: ``enabled=False`` short-circuits
+    every code path that touches citations or older-works, so existing
+    deployments see no behavior change on upgrade.
+
+    Field groups:
+
+    **Provider connection:**
+        - ``provider`` (default ``"semantic_scholar"``): backend identifier.
+        - ``api_key`` / ``base_url``: optional connection settings. ``api_key``
+          supports ``${ENV_VAR}`` interpolation.
+        - ``request_timeout``, ``batch_size``, ``requests_per_second``: HTTP
+          client tuning.
+
+    **Refresh cadence:**
+        - ``refresh_interval_hours``: how often the daemon re-queries S2.
+        - ``refresh_candidate_limit``: max stale papers selected per tick.
+
+    **Tiebreaker shape:**
+        - ``normalization_ceiling``: citation count that maps to "10/10" on
+          the log-scaled tiebreaker. Lower = citation matters more for ties.
+
+    **Dynamic re-scoring:**
+        - ``rescore_min_delta`` / ``rescore_min_ratio``: growth thresholds —
+          re-score is triggered when EITHER is met. Set both very high (or
+          ``rescore_max_per_run=0``) to disable re-scoring while still
+          collecting citation data.
+        - ``rescore_max_per_run``: per-tick cap on Claude calls.
+        - ``rescore_min_interval_days``: per-paper cooldown.
+
+    **Older-works track:**
+        - ``older_works_min_age_years``: papers must be at least this many
+          years old to be eligible.
+        - ``older_works_max_new_per_ingest``: cap on Claude scoring of newly
+          discovered older papers per ingest cycle.
+    """
+
+    enabled: bool = False
+    provider: str = "semantic_scholar"
+    api_key: str | None = None
+    base_url: str = "https://api.semanticscholar.org/graph/v1"
+    request_timeout: float = 15.0
+    batch_size: int = 50
+    requests_per_second: float = 1.0
+    refresh_interval_hours: int = 24
+    refresh_candidate_limit: int = 500
+    normalization_ceiling: int = 1000
+    rescore_min_delta: int = 50
+    rescore_min_ratio: float = 0.2
+    rescore_max_per_run: int = 20
+    rescore_min_interval_days: int = 7
+    older_works_min_age_years: int = 2
+    older_works_max_age_years: int = 10
+    older_works_max_new_per_ingest: int = 20
+    # How many candidates S2 search returns per sub-domain query. Was a
+    # hardcoded literal in older_works_fetcher; promoted to config so
+    # operators can widen the funnel when they raise the citation floor.
+    older_works_search_page_size: int = 20
+    # Each sub-domain queries S2 once per keyword variant (from
+    # ``models.SUB_DOMAINS``). Capping at N variants per sub-domain keeps
+    # total HTTP volume manageable when running across all 15 sub-domains.
+    older_works_keywords_per_sub_domain: int = 3
+    # Citation count above which a cached fresh paper auto-promotes to
+    # paper_kind="older". Held intentionally HIGHER than
+    # ``min_citations_for_older_works`` (the search-discovery floor)
+    # because promotion is a stronger claim — we need real evidence the
+    # paper has become a classic, not just "reasonably cited".
+    older_works_promote_min_citations: int = 500
+
+    @model_validator(mode="after")
+    def _check_positive(self) -> CitationsConfig:
+        if self.refresh_interval_hours <= 0:
+            raise ValueError("citations.refresh_interval_hours must be positive")
+        if self.refresh_candidate_limit <= 0:
+            raise ValueError("citations.refresh_candidate_limit must be positive")
+        if self.normalization_ceiling <= 0:
+            raise ValueError("citations.normalization_ceiling must be positive")
+        if self.batch_size <= 0:
+            raise ValueError("citations.batch_size must be positive")
+        if self.requests_per_second <= 0:
+            raise ValueError("citations.requests_per_second must be positive")
+        if self.request_timeout <= 0:
+            raise ValueError("citations.request_timeout must be positive")
+        if self.rescore_min_delta < 0:
+            raise ValueError("citations.rescore_min_delta must be non-negative")
+        if self.rescore_min_ratio < 0:
+            raise ValueError("citations.rescore_min_ratio must be non-negative")
+        if self.rescore_max_per_run < 0:
+            raise ValueError("citations.rescore_max_per_run must be non-negative")
+        if self.rescore_min_interval_days < 0:
+            raise ValueError("citations.rescore_min_interval_days must be non-negative")
+        if self.older_works_min_age_years < 0:
+            raise ValueError("citations.older_works_min_age_years must be non-negative")
+        if self.older_works_max_age_years <= 0:
+            raise ValueError("citations.older_works_max_age_years must be positive")
+        if self.older_works_max_age_years < self.older_works_min_age_years:
+            raise ValueError(
+                "citations.older_works_max_age_years must be >= citations.older_works_min_age_years"
+            )
+        if self.older_works_max_new_per_ingest < 0:
+            raise ValueError("citations.older_works_max_new_per_ingest must be non-negative")
+        if self.older_works_search_page_size <= 0:
+            raise ValueError("citations.older_works_search_page_size must be positive")
+        if self.older_works_keywords_per_sub_domain <= 0:
+            raise ValueError("citations.older_works_keywords_per_sub_domain must be positive")
+        if self.older_works_promote_min_citations < 0:
+            raise ValueError("citations.older_works_promote_min_citations must be non-negative")
+        return self
 
 
 class AdminConfig(BaseModel):
@@ -432,6 +563,7 @@ class AppConfig(BaseModel):
     subscriptions: SubscriptionDefaultsConfig = Field(default_factory=SubscriptionDefaultsConfig)
     web: WebConfig = Field(default_factory=WebConfig)
     thresholds: ThresholdsConfig = Field(default_factory=ThresholdsConfig)
+    citations: CitationsConfig = Field(default_factory=CitationsConfig)
     users: list[UserConfig] = Field(default_factory=list)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)

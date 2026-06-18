@@ -38,6 +38,12 @@ paper-agent web --host 0.0.0.0 --port 9000 -c config.yaml  # custom bind
 # Backfill cached papers scored before the structured-insights upgrade.
 # Re-scores rows where impact_tier / key_contributions are NULL; safe to interrupt.
 paper-agent rescore --missing-fields -c config.yaml
+
+# Citation refresh + dynamic re-scoring (citation-aware-scoring change).
+# Requires citations.enabled: true in config.yaml. Same sequence as the daemon job.
+paper-agent refresh-citations -c config.yaml                # default staleness cutoff
+paper-agent refresh-citations --all -c config.yaml          # force-refresh every paper
+paper-agent refresh-citations --stale-days 7 -c config.yaml # custom cutoff
 ```
 
 On Windows, set `PYTHONIOENCODING=utf-8` before running CLI to avoid GBK encoding errors with emoji output.
@@ -53,6 +59,7 @@ The pipeline has two phases:
 **Shared phase** (runs once, saves Claude API cost):
 ```
 Fetch superset → Dedup against papers cache → Score with Claude → Cache results
+                                              ↘ (optional) discover older works → score → cache (paper_kind="older")
 ```
 
 **Per-user phase** (runs for each subscription user):
@@ -148,6 +155,22 @@ Papers are scored in batches (default 10). After each batch the scorer logs a `t
 
 `ScoredPaper.total_score` remains a property using default 0.6/0.4 weights for backward compatibility. Pipeline-level weighted sorting goes through `sort_by_score(papers, weights=ScoreWeights.from_scoring_config(config.scoring))`.
 
+### Citations & dynamic re-scoring (`citation_refresh.py`, `scorer/citation_provider.py`)
+
+Off by default (`citations.enabled=false`). When enabled, three things happen:
+
+1. **Periodic citation refresh** — a scheduler job (cadence `citations.refresh_interval_hours`, default 24h) fetches `citationCount` + `influentialCitationCount` from Semantic Scholar for stale papers, capped at `refresh_candidate_limit` per tick. Free (no Claude tokens). The refresh job updates `citation_count`/`influential_citation_count`/`citations_updated_at` in place, NEVER touching `citation_count_at_score`.
+
+2. **Dynamic re-scoring** — papers whose citations grew past `rescore_min_delta` (absolute) OR `rescore_min_ratio` (relative) are re-scored by Claude with current citation counts supplied as input context (`Citations: N (influential: M). Consider this real-world impact evidence...`). Bounded per tick by `rescore_max_per_run` (default 20, biggest movers first) and per-paper by `rescore_min_interval_days` (default 7). Claude returns a fresh `relevance/quality/tier`; `total_score` is recomputed from the refreshed numbers (formula unchanged). The merge step in `rescore_dynamic` keeps the existing citation columns alive across the `INSERT OR REPLACE` write — see Storage section for why this matters.
+
+3. **Older-works discovery** — when `thresholds.older_works_per_digest > 0`, each ingest queries S2 search by sub-domain keyword for highly-cited papers older than `older_works_min_age_years` (default 2), scores up to `older_works_max_new_per_ingest` new ones via Claude (one-time cost guard), and tags them `paper_kind="older"`. Older works are delivered in a distinct "重要老作" digest section, additive to `top_n` (not subtracted from the fresh budget).
+
+**Ranking impact:** the `total_score` formula stays `relevance*w_r + quality*w_q` — citations NEVER enter it. When `scoring.citation_weight > 0` AND `citations.enabled`, `sort_by_score` adds a tertiary key (`citation_component` log-normalized to `normalization_ceiling`) so equal-tier-equal-score papers break ties by citation count. With the defaults (`citation_weight=0.0`), ranking is identical to pre-change behavior bit-for-bit.
+
+**Cost control:** every magic number is a config knob (`citations.*` block). Set `rescore_max_per_run=0` to disable Claude re-scoring while still collecting citation data. Set `older_works_per_digest=0` (default) to fully disable the older-works track. CLI: `paper-agent refresh-citations [--all|--stale-days N]` runs the same refresh+rescore sequence the daemon job uses.
+
+**Why the formula is unchanged:** `total_score` is rendered in the UI ("R: 8.5 / Q: 7.0 / Total: 7.9"). Folding citations into it would silently change displayed numbers and break `configurable-scoring-weights`. Re-scoring achieves the same goal — citations DO move `total_score` and `impact_tier` — but indirectly, by giving the LLM new evidence, so the formula's documented meaning stays stable.
+
 ### Storage (`storage/database.py`)
 
 Two-table schema:
@@ -156,7 +179,9 @@ papers (arxiv_id PK)       -- score cache, shared across users
 sent_papers (user_id, arxiv_id PK) -- per-user delivery tracking
 ```
 
-The `papers` table gained 4 columns in the structured-insights upgrade — `key_contributions` (JSON-encoded TEXT), `problem_statement_zh`, `methods_zh`, `impact_tier`. The migration runs on startup via idempotent `ALTER TABLE ADD COLUMN` (guarded by `PRAGMA table_info` so repeat starts are no-ops). Legacy rows with NULL values read back as `()` / `""` / `""` / `"solid"` so they render gracefully in the web UI without forcing a rescore. Use `paper-agent rescore --missing-fields` to opt-in to backfilling them.
+The `papers` table gained 4 columns in the structured-insights upgrade — `key_contributions` (JSON-encoded TEXT), `problem_statement_zh`, `methods_zh`, `impact_tier`. The citation-aware-scoring change added 5 more — `citation_count`, `influential_citation_count`, `citations_updated_at`, `citation_count_at_score` (snapshot for growth detection), and `paper_kind` (`"fresh"` for arXiv-fetched papers, `"older"` for the older-works track). All migrations run on startup via idempotent `ALTER TABLE ADD COLUMN` (guarded by `PRAGMA table_info`). Legacy rows read back with safe defaults — `citation_count=0`, `paper_kind="fresh"` — so they render and rank correctly without rescoring. Use `paper-agent rescore --missing-fields` for structured-insight backfill, `paper-agent refresh-citations` for citation backfill.
+
+⚠️ **`cache_papers()` writes all 22 columns via `INSERT OR REPLACE`** — meaning a re-scored paper passed back must carry the existing citation columns or they'll be clobbered to NULL. The dynamic re-score path in `citation_refresh.rescore_dynamic` merges the prior citation fields back into the re-scored `ScoredPaper` before calling `cache_papers`. This is load-bearing — don't break it.
 
 Key methods:
 - `filter_uncached(ids)`: IDs not yet scored (need Claude API call)

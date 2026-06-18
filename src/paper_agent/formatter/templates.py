@@ -97,6 +97,28 @@ def _group_papers_by_tier(
     return [(tier, papers) for tier, papers in buckets.items() if papers]
 
 
+def _citation_badge(sp: ScoredPaper) -> str:
+    """Render the inline "📈 N citations" badge, or empty when count is 0.
+
+    Older-works papers (paper_kind="older") additionally get a "🔖 重要老作"
+    marker next to the citation count so users can visually distinguish
+    surfaced classics from fresh papers in the mixed list.
+    """
+    parts: list[str] = []
+    if sp.citation_count and sp.citation_count > 0:
+        parts.append(
+            f'<span style="background:#fef3c7; color:#92400e; padding:2px 8px; '
+            f'border-radius:12px; font-size:12px;">'
+            f"📈 {sp.citation_count} citations</span>"
+        )
+    if sp.paper_kind == "older":
+        parts.append(
+            '<span style="background:#fce7f3; color:#9d174d; padding:2px 8px; '
+            'border-radius:12px; font-size:12px;">🔖 重要老作</span>'
+        )
+    return " ".join(parts)
+
+
 def _paper_row(sp: ScoredPaper, index: int) -> str:
     """Render one paper as an HTML table row with per-tier styling."""
     authors = ", ".join(sp.paper.authors[:5])
@@ -198,6 +220,7 @@ def _paper_row(sp: ScoredPaper, index: int) -> str:
                                  border-radius:12px; font-size:12px;">
                         质量 {sp.quality_score:.1f}
                     </span>
+                    {_citation_badge(sp)}
                     {tag_badges}
                 </div>
             </td>
@@ -226,18 +249,59 @@ def _tier_section(tier: str, papers: list[ScoredPaper], start_index: int) -> str
     return header + "".join(rows)
 
 
+def _older_works_section(papers: list[ScoredPaper], start_index: int) -> str:
+    """Render the "重要老作" section: distinct header + paper rows.
+
+    Visually separated from the tier groups by a deeper-tinted header bar
+    so users immediately recognize this is curated older content, not new
+    arXiv submissions. Citation badges (rendered by ``_paper_row`` via
+    ``_citation_badge``) carry the actual numeric impact signal.
+    """
+    if not papers:
+        return ""
+    header = f"""
+        <tr>
+            <td colspan="2" style="padding:20px 8px 8px;
+                                   border-bottom:2px solid #be185d;">
+                <span style="background:#fce7f3; color:#9d174d;
+                             padding:6px 14px; border-radius:999px;
+                             font-weight:700; font-size:14px;
+                             letter-spacing:0.02em;">
+                    🔖 重要老作 / Important Older Works
+                </span>
+                <span style="color:#888; font-size:12px; margin-left:8px;">
+                    {len(papers)} 篇
+                </span>
+            </td>
+        </tr>"""
+    rows = [_paper_row(sp, start_index + i) for i, sp in enumerate(papers)]
+    return header + "".join(rows)
+
+
 def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> str:
-    """Format papers as HTML email grouped by impact tier."""
+    """Format papers as HTML email grouped by impact tier.
+
+    Splits the input by ``paper_kind`` so the older-works track gets its own
+    visually-distinct section after the regular tier groups. Callers don't
+    need to think about the split — they pass everything in one list and
+    the formatter routes papers based on their stored ``paper_kind``.
+    """
     if not papers:
         return "<p>今日无符合条件的高质量 AI Infra 论文。</p>"
+
+    fresh = [sp for sp in papers if sp.paper_kind != "older"]
+    older = [sp for sp in papers if sp.paper_kind == "older"]
 
     date_str = datetime.now().strftime("%Y-%m-%d")
 
     sections: list[str] = []
     idx = 1
-    for tier, tier_papers in _group_papers_by_tier(papers):
+    for tier, tier_papers in _group_papers_by_tier(fresh):
         sections.append(_tier_section(tier, tier_papers, idx))
         idx += len(tier_papers)
+    if older:
+        sections.append(_older_works_section(older, idx))
+        idx += len(older)
 
     unsubscribe_html = ""
     if unsubscribe_url:

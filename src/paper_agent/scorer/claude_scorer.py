@@ -329,25 +329,69 @@ class ClaudeScorer:
             papers=formatted,
         )
 
-    def _format_papers(self, papers: list[Paper]) -> str:
-        """Format papers for the Claude prompt."""
+    def _format_papers(
+        self,
+        papers: list[Paper],
+        citation_context: dict[str, tuple[int, int]] | None = None,
+    ) -> str:
+        """Format papers for the Claude prompt.
+
+        When ``citation_context`` is provided (re-scoring path), each paper
+        whose ``arxiv_id`` is a key gets an extra ``Citations: ...`` line so
+        the LLM can weigh real-world impact evidence against the abstract.
+        First-score path passes ``None`` and the message is byte-identical
+        to pre-change behavior.
+        """
         parts = []
         for i, p in enumerate(papers):
-            parts.append(
+            block = (
                 f"--- Paper {i} ---\n"
                 f"Title: {p.title}\n"
                 f"Authors: {', '.join(p.authors[:5])}{'...' if len(p.authors) > 5 else ''}\n"
                 f"Categories: {', '.join(p.categories)}\n"
                 f"Abstract: {p.abstract[: self.abstract_max_length]}\n"
             )
+            if citation_context and p.arxiv_id in citation_context:
+                cc, ic = citation_context[p.arxiv_id]
+                if cc > 0:
+                    block += (
+                        f"Citations: {cc} (influential: {ic}). "
+                        "Consider this real-world impact evidence when "
+                        "judging relevance, quality, and impact_tier — a "
+                        "highly-cited paper that you previously rated 'solid' "
+                        "may deserve 'breakthrough'.\n"
+                    )
+            parts.append(block)
         return "\n".join(parts)
 
-    def _score_batch(self, papers: list[Paper]) -> list[ScoredPaper]:
-        """Score a single batch of papers."""
+    def _build_user_message_with_citations(
+        self,
+        papers: list[Paper],
+        citation_context: dict[str, tuple[int, int]] | None,
+    ) -> str:
+        """Build the user message including optional citation context."""
+        formatted = self._format_papers(papers, citation_context=citation_context)
+        if self.prompts and self.prompts.user_message_template:
+            return _SafeFormatter().format(
+                self.prompts.user_message_template,
+                paper_count=len(papers),
+                papers=formatted,
+            )
+        return _DEFAULT_USER_MESSAGE_TEMPLATE.format(
+            paper_count=len(papers),
+            papers=formatted,
+        )
+
+    def _score_batch(
+        self,
+        papers: list[Paper],
+        citation_context: dict[str, tuple[int, int]] | None = None,
+    ) -> list[ScoredPaper]:
+        """Score a single batch of papers, optionally with citation context."""
         if not papers:
             return []
 
-        user_msg = self._build_user_message(papers)
+        user_msg = self._build_user_message_with_citations(papers, citation_context)
 
         kwargs: dict = {
             "model": self.model,
@@ -416,8 +460,18 @@ class ClaudeScorer:
 
         return scored
 
-    def score(self, papers: list[Paper]) -> list[ScoredPaper]:
-        """Score all papers in batches."""
+    def score(
+        self,
+        papers: list[Paper],
+        citation_context: dict[str, tuple[int, int]] | None = None,
+    ) -> list[ScoredPaper]:
+        """Score all papers in batches.
+
+        ``citation_context`` is an optional ``{arxiv_id: (citation_count,
+        influential_count)}`` mapping consumed by the dynamic re-scoring path
+        to give Claude real-world impact evidence. First-score callers pass
+        ``None`` (the historical behavior).
+        """
         if not papers:
             return []
 
@@ -430,7 +484,7 @@ class ClaudeScorer:
             logger.info(f"Scoring batch {batch_num}/{total_batches} ({len(batch)} papers)...")
 
             try:
-                scored = self._score_batch(batch)
+                scored = self._score_batch(batch, citation_context=citation_context)
                 all_scored.extend(scored)
                 logger.info(f"  → Scored {len(scored)} papers")
             except Exception as e:

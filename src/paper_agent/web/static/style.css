@@ -407,6 +407,38 @@ code {
     color: #9ca3af;
 }
 
+/* Citation count badge — sits next to the tier badge in the card header. */
+.citation-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 12px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-left: 4px;
+    white-space: nowrap;
+}
+
+/* "重要老作" marker for papers surfaced by the older-works track. */
+.paper-kind-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-left: 4px;
+    white-space: nowrap;
+}
+.paper-kind-older {
+    background: #fce7f3;
+    color: #9d174d;
+}
+.paper-card.paper-older {
+    border-left: 4px solid #be185d;  /* distinct from breakthrough orange */
+    padding-left: calc(1rem - 3px);
+}
+
 .paper-card.tier-breakthrough {
     border-left: 4px solid #f59e0b;
     padding-left: calc(1rem - 3px);  /* compensate for thicker border */

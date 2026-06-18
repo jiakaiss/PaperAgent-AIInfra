@@ -8,7 +8,7 @@
 {% if papers %}
 <div class="paper-list">
     {% for sp in papers %}
-    <article class="paper-card tier-{{ sp.impact_tier or 'solid' }}">
+    <article class="paper-card tier-{{ sp.impact_tier or 'solid' }}{% if sp.paper_kind == 'older' %} paper-older{% endif %}">
         <div class="paper-card-header">
             <h3 class="paper-title">
                 <a href="{{ sp.paper.abs_url }}" target="_blank" rel="noopener">{{ sp.paper.title }}</a>
@@ -16,6 +16,12 @@
             {% set tier = sp.impact_tier or 'solid' %}
             {% set tier_labels = {'breakthrough': '重磅突破', 'solid': '稳健工作', 'incremental': '渐进改进'} %}
             <span class="tier-badge tier-badge-{{ tier }}">{{ tier_labels[tier] }}</span>
+            {% if sp.paper_kind == 'older' %}
+            <span class="paper-kind-badge paper-kind-older" title="高引用老论文">🔖 重要老作</span>
+            {% endif %}
+            {% if sp.citation_count and sp.citation_count > 0 %}
+            <span class="citation-badge" title="Semantic Scholar 引用数">📈 {{ sp.citation_count }} citations</span>
+            {% endif %}
         </div>
         <p class="paper-authors">
             {% if sp.paper.authors|length <= 3 %}

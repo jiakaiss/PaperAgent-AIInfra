@@ -69,4 +69,27 @@
             </tbody>
         </table>
     </div>
+
+    <h3 class="admin-subheader">引用数采集</h3>
+    {% if citation_panel.enabled %}
+    <div class="admin-citation-panel">
+        <p>
+            <strong>{{ citation_panel.refreshed }}</strong> / {{ citation_panel.total }}
+            ({{ citation_panel.refreshed_pct }}%) 已采集引用数 ·
+            <strong>{{ citation_panel.with_citations }}</strong> 篇有引用 ·
+            最近一次刷新：
+            {% if citation_panel.last_refresh_at %}
+                {{ citation_panel.last_refresh_at }}
+            {% else %}
+                —
+            {% endif %}
+        </p>
+        <p class="admin-meta">
+            Provider: <code>{{ citation_panel.provider }}</code> ·
+            刷新周期: 每 {{ citation_panel.refresh_interval_hours }} 小时
+        </p>
+    </div>
+    {% else %}
+    <p class="admin-meta">引用数采集未启用 (citations.enabled=false)</p>
+    {% endif %}
 </div>

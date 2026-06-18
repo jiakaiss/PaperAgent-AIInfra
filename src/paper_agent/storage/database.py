@@ -11,13 +11,23 @@ from pathlib import Path
 
 from paper_agent.models import DEFAULT_TIER, IMPACT_TIERS, Paper, ScoredPaper
 
-# Schema additions for the enhance-paper-display-and-retrieval change.
-# Listed centrally so _ensure_papers_columns and write/read paths stay in sync.
+# Schema additions for the enhance-paper-display-and-retrieval change and
+# the citation-aware-scoring change. Listed centrally so
+# _ensure_papers_columns and write/read paths stay in sync.
 _PAPERS_NEW_COLUMNS: tuple[tuple[str, str], ...] = (
     ("key_contributions", "TEXT"),
     ("problem_statement_zh", "TEXT"),
     ("methods_zh", "TEXT"),
     ("impact_tier", "TEXT"),
+    # citation-aware-scoring change. citation_count is the live count from
+    # Semantic Scholar; citation_count_at_score is the snapshot captured the
+    # last time Claude scored this paper, used to detect growth for the
+    # dynamic re-scoring path.
+    ("citation_count", "INTEGER"),
+    ("influential_citation_count", "INTEGER"),
+    ("citations_updated_at", "TEXT"),
+    ("citation_count_at_score", "INTEGER"),
+    ("paper_kind", "TEXT"),
 )
 
 # SQL fragment that orders papers by impact tier (breakthrough < solid <
@@ -185,8 +195,157 @@ class PaperDatabase:
             ).fetchone()
             return row["cnt"]
 
+    # ─── Citation-aware-scoring methods ────────────────────────────────────
+
+    def get_stale_citations(
+        self,
+        limit: int,
+        stale_after_hours: float,
+    ) -> list[str]:
+        """Return arxiv_ids whose citation data is stale or never fetched.
+
+        A row is considered stale when ``citations_updated_at`` is NULL
+        (never refreshed) OR older than ``stale_after_hours`` ago. Results
+        are capped by ``limit`` so a single tick can't drown the provider.
+        Order: NULL first (oldest priority), then by oldest update.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT arxiv_id FROM papers
+                WHERE citations_updated_at IS NULL
+                   OR datetime(citations_updated_at, ? || ' hours')
+                      <= datetime('now', 'localtime')
+                ORDER BY citations_updated_at IS NOT NULL,
+                         citations_updated_at ASC
+                LIMIT ?
+                """,
+                (f"+{stale_after_hours}", limit),
+            ).fetchall()
+        return [row["arxiv_id"] for row in rows]
+
+    def update_citations(
+        self,
+        updates: list[tuple[str, int, int]],
+        updated_at: str | None = None,
+    ) -> int:
+        """Bulk-update citation counts for refreshed papers.
+
+        Each tuple is ``(arxiv_id, citation_count, influential_count)``.
+        Returns the number of rows updated. Does NOT touch
+        ``citation_count_at_score`` — that snapshot only moves when Claude
+        re-scores the paper.
+        """
+        if not updates:
+            return 0
+        ts = updated_at or datetime.now().isoformat()
+        with self._connect() as conn:
+            cursor = conn.executemany(
+                """
+                UPDATE papers
+                SET citation_count = ?,
+                    influential_citation_count = ?,
+                    citations_updated_at = ?
+                WHERE arxiv_id = ?
+                """,
+                [(c, i, ts, aid) for aid, c, i in updates],
+            )
+            return cursor.rowcount
+
+    def get_rescore_candidates(
+        self,
+        min_delta: int,
+        min_ratio: float,
+        min_interval_days: int,
+        limit: int,
+    ) -> list[ScoredPaper]:
+        """Select papers eligible for dynamic re-scoring.
+
+        Eligibility (ALL must hold):
+          * citation growth since last score ≥ ``min_delta`` (absolute) OR
+            ≥ ``min_ratio`` (relative to the last-score snapshot)
+          * last scored more than ``min_interval_days`` days ago
+
+        Ordered by largest absolute citation growth first so the per-run
+        budget spends on biggest movers (where the LLM's prior judgment is
+        most likely stale). NULL ``citation_count_at_score`` is treated as
+        0 — a freshly-citation-fetched paper that has never seen a snapshot
+        yet counts as having grown by its full current count.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM papers
+                WHERE
+                    -- absolute growth threshold
+                    (
+                        (citation_count - COALESCE(citation_count_at_score, 0)) >= ?
+                        OR
+                        -- relative growth threshold (avoid /0 with MAX(1, ...))
+                        (
+                            CAST(citation_count - COALESCE(citation_count_at_score, 0) AS REAL)
+                            /
+                            CAST(MAX(1, COALESCE(citation_count_at_score, 0)) AS REAL)
+                        ) >= ?
+                    )
+                    -- "scored at least N days ago" — express as scored_at +
+                    -- N days <= now so positive, zero, and negative interval
+                    -- arguments all work. Use <= (not <) because second-level
+                    -- truncation in datetime() makes a row scored milliseconds
+                    -- ago compare equal at min_interval_days=0. The 'localtime'
+                    -- modifier matches the local-naive timestamps written by
+                    -- cache_papers via datetime.now().isoformat().
+                    AND datetime(scored_at, ? || ' days')
+                        <= datetime('now', 'localtime')
+                ORDER BY
+                    (citation_count - COALESCE(citation_count_at_score, 0)) DESC
+                LIMIT ?
+                """,
+                (min_delta, min_ratio, f"+{min_interval_days}", limit),
+            ).fetchall()
+        return [self._row_to_scored_paper(r) for r in rows]
+
+    def get_citation_coverage(self) -> dict:
+        """Aggregate stats for the admin dashboard.
+
+        Returns a dict with:
+          * ``total`` — total cached papers
+          * ``refreshed`` — papers with non-NULL ``citations_updated_at``
+          * ``with_citations`` — papers with ``citation_count > 0``
+          * ``last_refresh_at`` — most recent ``citations_updated_at`` (or None)
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN citations_updated_at IS NOT NULL THEN 1 ELSE 0 END)
+                        AS refreshed,
+                    SUM(CASE WHEN citation_count IS NOT NULL AND citation_count > 0
+                             THEN 1 ELSE 0 END) AS with_citations,
+                    MAX(citations_updated_at) AS last_refresh_at
+                FROM papers
+                """
+            ).fetchone()
+        return {
+            "total": row["total"] or 0,
+            "refreshed": row["refreshed"] or 0,
+            "with_citations": row["with_citations"] or 0,
+            "last_refresh_at": row["last_refresh_at"],
+        }
+
+    # ──────────────────────────────────────────────────────────────────────
+
     def cache_papers(self, papers: list[ScoredPaper]) -> None:
-        """Store scored papers in the cache (upsert)."""
+        """Store scored papers in the cache (upsert).
+
+        ⚠️ INSERT OR REPLACE rewrites the entire row, so EVERY column must be
+        listed here — including the citation columns. If a re-scored paper
+        is passed without its current citation values, those columns would
+        be wiped to NULL. The caller (rescore_dynamic) is responsible for
+        merging the existing citation_count into the new ScoredPaper before
+        passing it back to cache_papers.
+        """
         if not papers:
             return
         now = datetime.now().isoformat()
@@ -198,8 +357,10 @@ class PaperDatabase:
                     (arxiv_id, title, authors, abstract, published, categories,
                      pdf_url, abs_url, relevance_score, quality_score, summary_zh,
                      sub_domain_tags, scored_at,
-                     key_contributions, problem_statement_zh, methods_zh, impact_tier)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     key_contributions, problem_statement_zh, methods_zh, impact_tier,
+                     citation_count, influential_citation_count, citations_updated_at,
+                     citation_count_at_score, paper_kind)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         sp.paper.arxiv_id,
@@ -219,6 +380,14 @@ class PaperDatabase:
                         sp.problem_statement_zh,
                         sp.methods_zh,
                         sp.impact_tier,
+                        sp.citation_count,
+                        sp.influential_citation_count,
+                        sp.citations_updated_at,
+                        # On every score (first or re-score), snapshot the
+                        # current citation_count so the next growth check
+                        # measures from this baseline.
+                        sp.citation_count,
+                        sp.paper_kind,
                     ),
                 )
 
@@ -271,11 +440,17 @@ class PaperDatabase:
         published_after: str | None = None,
         min_quality: float | None = None,
         tiers: set[str] | None = None,
+        older: str | None = None,
     ) -> tuple[str, list[str | float]]:
         """Build a WHERE clause and parameter list for paper filtering.
 
         Returns ``(clause, params)`` where ``clause`` is either an empty string
         or starts with `` WHERE ...``.
+
+        ``older`` accepts ``"only"`` (paper_kind = 'older'), ``"exclude"``
+        (paper_kind = 'fresh' OR NULL — legacy rows count as fresh), or
+        ``"include"`` / ``None`` (no kind filter, pre-change default).
+        Any other value is treated as ``"include"``.
         """
         conditions: list[str] = []
         params: list[str | float] = []
@@ -308,6 +483,13 @@ class PaperDatabase:
                 conditions.append(f"COALESCE(impact_tier, 'solid') IN ({placeholders})")
                 params.extend(valid_tiers)
 
+        if older == "only":
+            conditions.append("paper_kind = 'older'")
+        elif older == "exclude":
+            # Legacy rows have NULL paper_kind; treat them as fresh.
+            conditions.append("(paper_kind IS NULL OR paper_kind = 'fresh')")
+        # "include" / None / unknown → no kind filter
+
         if conditions:
             return " WHERE " + " AND ".join(conditions), params
         return "", params
@@ -330,6 +512,11 @@ class PaperDatabase:
         # produced by old SELECT * statements that don't include them at all.
         contribs_raw = _row_get(row, "key_contributions")
         contribs = tuple(json.loads(contribs_raw)) if contribs_raw else ()
+        # Citation columns added in citation-aware-scoring change. Legacy rows
+        # read back as 0 / None / "fresh" so existing behavior is preserved.
+        cit_count_raw = _row_get(row, "citation_count")
+        infl_count_raw = _row_get(row, "influential_citation_count")
+        cit_at_score_raw = _row_get(row, "citation_count_at_score")
         return ScoredPaper(
             paper=paper,
             relevance_score=row["relevance_score"],
@@ -340,6 +527,13 @@ class PaperDatabase:
             problem_statement_zh=_row_get(row, "problem_statement_zh") or "",
             methods_zh=_row_get(row, "methods_zh") or "",
             impact_tier=_row_get(row, "impact_tier") or DEFAULT_TIER,
+            citation_count=int(cit_count_raw) if cit_count_raw is not None else 0,
+            influential_citation_count=int(infl_count_raw) if infl_count_raw is not None else 0,
+            citations_updated_at=_row_get(row, "citations_updated_at"),
+            citation_count_at_score=(
+                int(cit_at_score_raw) if cit_at_score_raw is not None else None
+            ),
+            paper_kind=_row_get(row, "paper_kind") or "fresh",
         )
 
     def list_papers(
@@ -349,6 +543,7 @@ class PaperDatabase:
         published_after: str | None = None,
         min_quality: float | None = None,
         tiers: set[str] | None = None,
+        older: str | None = None,
         limit: int = 25,
         offset: int = 0,
     ) -> list[ScoredPaper]:
@@ -356,10 +551,11 @@ class PaperDatabase:
 
         Ordering: impact_tier ASC (breakthrough → solid → incremental, with
         NULL / unknown coerced to ``solid``), then weighted total score DESC.
-        ``limit`` and ``offset`` control pagination.
+        ``limit`` and ``offset`` control pagination. ``older`` accepts
+        ``"only" | "include" | "exclude" | None`` — see ``_build_filter_clause``.
         """
         where, params = self._build_filter_clause(
-            sub_domains, search, published_after, min_quality, tiers
+            sub_domains, search, published_after, min_quality, tiers, older
         )
         order = f" ORDER BY {_TIER_ORDER_SQL}"
         paging = " LIMIT ? OFFSET ?"
@@ -377,10 +573,11 @@ class PaperDatabase:
         published_after: str | None = None,
         min_quality: float | None = None,
         tiers: set[str] | None = None,
+        older: str | None = None,
     ) -> int:
         """Return the number of scored papers matching the given filters."""
         where, params = self._build_filter_clause(
-            sub_domains, search, published_after, min_quality, tiers
+            sub_domains, search, published_after, min_quality, tiers, older
         )
         with self._connect() as conn:
             row = conn.execute(f"SELECT COUNT(*) as cnt FROM papers{where}", params).fetchone()

@@ -92,6 +92,8 @@ def subscription_to_user_config(
             "top_n": thresholds_config.top_n,
             "per_sub_domain_top_n": thresholds_config.per_sub_domain_top_n,
             "min_tier": thresholds_config.min_tier,
+            "older_works_per_digest": thresholds_config.older_works_per_digest,
+            "min_citations_for_older_works": thresholds_config.min_citations_for_older_works,
         }
     return UserConfig(
         user_id=email,
