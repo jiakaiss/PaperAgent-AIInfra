@@ -76,6 +76,13 @@ def start_daemon(
 
     pipeline = Pipeline(config)
 
+    # Optional citation refresh job — only constructed when citations.enabled.
+    citation_provider = None
+    if config.citations.enabled:
+        from paper_agent.scorer.citation_provider import create_citation_provider
+
+        citation_provider = create_citation_provider(config.citations)
+
     started_at = datetime.now().isoformat(timespec="seconds")
     # Initial heartbeat so the admin dashboard sees "running" the moment
     # the daemon starts, before the first scheduled job fires.
@@ -103,6 +110,27 @@ def start_daemon(
             logger.error(f"Digest failed: {e}", exc_info=True)
         finally:
             write_heartbeat(db_path, started_at=started_at, last_event="digest")
+
+    def run_citation_refresh():
+        logger.info("Scheduled citation refresh started...")
+        try:
+            from paper_agent.citation_refresh import refresh_and_rescore
+
+            result = refresh_and_rescore(
+                pipeline.db,
+                citation_provider,
+                pipeline.scorer,
+                config.citations,
+            )
+            logger.info(
+                "Citation refresh complete: %d updated, %d re-scored",
+                result.citations_updated,
+                result.rescored,
+            )
+        except Exception as e:
+            logger.error(f"Citation refresh failed: {e}", exc_info=True)
+        finally:
+            write_heartbeat(db_path, started_at=started_at, last_event="citations")
 
     if config.schedule.ingest_hours:
         ingest_hours_csv = ",".join(str(h) for h in sorted(config.schedule.ingest_hours))
@@ -135,6 +163,19 @@ def start_daemon(
         name="AI Infra Paper Digest",
         misfire_grace_time=3600,
     )
+
+    if citation_provider is not None:
+        scheduler.add_job(
+            run_citation_refresh,
+            trigger=IntervalTrigger(hours=config.citations.refresh_interval_hours),
+            id="citation_refresh",
+            name="Citation refresh + dynamic re-scoring",
+            misfire_grace_time=3600,
+        )
+        logger.info(
+            "Citation refresh scheduled every %d hour(s)",
+            config.citations.refresh_interval_hours,
+        )
 
     # Handle shutdown signals
     def shutdown(signum, frame):

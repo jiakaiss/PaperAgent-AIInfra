@@ -290,6 +290,29 @@ def admin_papers(
         if tag not in seen:
             sub_rows.append({"tag": tag, "count": 0, "pct": 0.0})
 
+    # Citation-coverage panel — only rendered when citations are enabled in
+    # config. When disabled we still pass a small payload so the template
+    # can show the "未启用" line; this keeps every panel sub-section
+    # discoverable in the rendered HTML for testing purposes.
+    config: AppConfig | None = getattr(request.app.state, "config", None)
+    citations_enabled = bool(config and config.citations.enabled)
+    citation_panel: dict
+    if citations_enabled:
+        cov = db.get_citation_coverage()
+        cov_total = cov["total"] or 1
+        citation_panel = {
+            "enabled": True,
+            "total": cov["total"],
+            "refreshed": cov["refreshed"],
+            "with_citations": cov["with_citations"],
+            "refreshed_pct": round(cov["refreshed"] * 100 / cov_total, 1),
+            "last_refresh_at": cov["last_refresh_at"],
+            "provider": config.citations.provider if config else "",
+            "refresh_interval_hours": (config.citations.refresh_interval_hours if config else 0),
+        }
+    else:
+        citation_panel = {"enabled": False}
+
     return templates.TemplateResponse(
         request=request,
         name="admin/_papers.html",
@@ -302,6 +325,7 @@ def admin_papers(
             "tier_rows": tier_rows,
             "sub_rows": sub_rows,
             "daily_papers": daily_papers,
+            "citation_panel": citation_panel,
         },
     )
 
@@ -334,12 +358,9 @@ def admin_system(
     # config object to a template — that would risk leaking secrets via
     # accidental ``{{ config }}`` rendering.
     if config.schedule.ingest_hours:
-        ingest_schedule_desc = (
-            "每天 "
-            + ", ".join(
-                f"{h:02d}:{config.schedule.ingest_minute:02d}"
-                for h in sorted(config.schedule.ingest_hours)
-            )
+        ingest_schedule_desc = "每天 " + ", ".join(
+            f"{h:02d}:{config.schedule.ingest_minute:02d}"
+            for h in sorted(config.schedule.ingest_hours)
         )
     else:
         ingest_schedule_desc = f"每 {config.schedule.ingest_interval_minutes} 分钟"

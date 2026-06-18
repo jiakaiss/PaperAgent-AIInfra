@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from paper_agent.config import ScoringConfig
@@ -205,6 +206,13 @@ def tier_rank(impact_tier: str | None) -> int:
     return TIER_RANK.get(impact_tier, TIER_RANK[DEFAULT_TIER])
 
 
+# Paper kind: "fresh" comes from the regular arXiv fetch; "older" is surfaced
+# by the citation-driven older-works track and rendered in a distinct digest
+# section. Legacy rows with NULL paper_kind read back as "fresh".
+PaperKind = Literal["fresh", "older"]
+DEFAULT_PAPER_KIND: PaperKind = "fresh"
+
+
 @dataclass(frozen=True)
 class ScoredPaper:
     """A paper with LLM-generated scores and summary."""
@@ -220,6 +228,19 @@ class ScoredPaper:
     problem_statement_zh: str = ""  # 1-2 sentences, may be empty for legacy rows
     methods_zh: str = ""  # 1-2 sentences, may be empty for legacy rows
     impact_tier: str = DEFAULT_TIER  # one of IMPACT_TIERS
+    # Citation-aware-scoring change. Citation fields come from the
+    # CitationProvider (Semantic Scholar by default), not from the LLM.
+    # Legacy rows without citation data read back as 0/0/None/None.
+    citation_count: int = 0
+    influential_citation_count: int = 0
+    citations_updated_at: str | None = None  # ISO timestamp of last refresh
+    # Snapshot of citation_count taken at the most recent Claude score.
+    # Used by the dynamic re-scoring path to compute citation growth since
+    # last judgment. None means "never recorded" — treated as 0 for growth.
+    citation_count_at_score: int | None = None
+    # paper_kind is set by the older-works track to "older"; everything from
+    # the regular arXiv fetch defaults to "fresh".
+    paper_kind: PaperKind = DEFAULT_PAPER_KIND
 
     @property
     def total_score(self) -> float:
@@ -242,12 +263,16 @@ class ScoredPaper:
 class ScoreWeights:
     """Weights for combining relevance and quality scores into a total score.
 
-    Default values (0.6, 0.4) match the historical hardcoded behavior in
-    ``ScoredPaper.total_score``.
+    Default values (0.6, 0.4, 0.0) match the historical hardcoded behavior in
+    ``ScoredPaper.total_score`` plus a citation tiebreaker that defaults off.
+    The citation weight is applied as a tertiary sort key in ``sort_by_score``,
+    NEVER folded into the ``compute_total_score`` formula — total_score keeps
+    its documented 0-10 meaning regardless of citations.
     """
 
     relevance: float = 0.6
     quality: float = 0.4
+    citation: float = 0.0
 
     @classmethod
     def from_scoring_config(cls, config: ScoringConfig) -> ScoreWeights:
@@ -255,19 +280,44 @@ class ScoreWeights:
         return cls(
             relevance=config.relevance_weight,
             quality=config.quality_weight,
+            citation=config.citation_weight,
         )
 
 
 def compute_total_score(paper: ScoredPaper, weights: ScoreWeights) -> float:
-    """Compute weighted total score using the given weights."""
+    """Compute weighted total score using the given weights.
+
+    Citation count is intentionally NOT a term in this formula — it sorts
+    separately as a tertiary key so the displayed Total stays interpretable
+    as ``relevance * w_r + quality * w_q``.
+    """
     return paper.relevance_score * weights.relevance + paper.quality_score * weights.quality
+
+
+def citation_component(paper: ScoredPaper, ceiling: int) -> float:
+    """Log-normalized citation tiebreaker on a 0-10 scale.
+
+    ``citation_count == 0`` maps to 0 (so brand-new papers aren't penalized
+    relative to other 0-citation peers — equal counts get equal components).
+    ``citation_count == ceiling`` maps to ~10. Monotonic non-decreasing in
+    raw citation count.
+
+    The ``ceiling`` MUST be supplied by the caller from
+    ``citations.normalization_ceiling`` — this function never holds a
+    hardcoded literal so operators can re-tune ranking without code edits.
+    """
+    if paper.citation_count <= 0 or ceiling <= 0:
+        return 0.0
+    return 10.0 * math.log10(1 + paper.citation_count) / math.log10(1 + ceiling)
 
 
 def sort_by_score(
     papers: list[ScoredPaper],
     weights: ScoreWeights | None = None,
+    *,
+    citation_ceiling: int | None = None,
 ) -> list[ScoredPaper]:
-    """Sort papers by impact tier first, then total score (highest first).
+    """Sort papers by impact tier, then total score, then optionally citations.
 
     Tier ordering is ``breakthrough`` → ``solid`` → ``incremental``; within a
     tier, papers are ordered by descending total score. When ``weights`` is
@@ -275,15 +325,34 @@ def sort_by_score(
     weights. Otherwise it falls back to ``ScoredPaper.total_score`` (default
     0.6/0.4 weighting) for backward compatibility.
 
+    Citation tiebreaker: when both ``weights.citation > 0`` AND
+    ``citation_ceiling`` is provided (positive), a tertiary sort key uses
+    ``citation_component`` so equal-tier-equal-score papers rank by citations.
+    With ``citation_ceiling=None`` or ``weights.citation == 0`` the key
+    collapses to a constant (no ordering change) — preserving pre-change
+    behavior bit-for-bit.
+
     Papers with an unknown ``impact_tier`` value are treated as ``"solid"``.
     """
     if weights is None:
         score_of = lambda p: p.total_score  # noqa: E731
     else:
         score_of = lambda p: compute_total_score(p, weights)  # noqa: E731
-    # Sort key: (tier_rank ASC, -score) — Python sorts ascending, so negate the
-    # score to get descending order within a tier.
+
+    use_citation = (
+        weights is not None
+        and weights.citation > 0
+        and citation_ceiling is not None
+        and citation_ceiling > 0
+    )
+    if use_citation:
+        cit_of = lambda p: citation_component(p, citation_ceiling)  # noqa: E731
+    else:
+        cit_of = lambda _p: 0.0  # noqa: E731
+
+    # Sort key: (tier_rank ASC, -score, -citation_component) — Python sorts
+    # ascending, so negate to get descending order within a tier.
     return sorted(
         papers,
-        key=lambda p: (tier_rank(p.impact_tier), -score_of(p)),
+        key=lambda p: (tier_rank(p.impact_tier), -score_of(p), -cit_of(p)),
     )

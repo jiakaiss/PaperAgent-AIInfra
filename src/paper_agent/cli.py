@@ -441,5 +441,79 @@ def rescore(config: str, missing_fields: bool):
     click.echo(f"\nDone. Processed {processed}/{total} papers.")
 
 
+@cli.command(name="refresh-citations")
+@click.option("--config", "-c", default="config.yaml", help="Config file path")
+@click.option("--all", "force_all", is_flag=True, help="Refresh every cached paper")
+@click.option(
+    "--stale-days",
+    type=int,
+    default=None,
+    help="Refresh papers whose citations are NULL or older than N days",
+)
+def refresh_citations_cmd(config: str, force_all: bool, stale_days: int | None):
+    """Fetch fresh citation counts and dynamically re-score papers whose impact rose.
+
+    Without flags, uses ``citations.refresh_interval_hours`` as the staleness
+    cutoff (same default as the daemon job). ``--all`` forces every cached
+    paper to be re-queried; ``--stale-days N`` targets a specific cutoff.
+
+    After fetching citations, papers whose count grew past
+    ``rescore_min_delta`` / ``rescore_min_ratio`` are re-scored with Claude
+    using the new counts as input context. Bounded by ``rescore_max_per_run``.
+
+    Requires ``citations.enabled: true`` in the config.
+    """
+    from paper_agent.citation_refresh import refresh_and_rescore
+    from paper_agent.config import load_config
+    from paper_agent.scorer.citation_provider import create_citation_provider
+    from paper_agent.scorer.claude_scorer import ClaudeScorer
+    from paper_agent.storage.database import PaperDatabase
+
+    try:
+        cfg = load_config(config)
+    except FileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    setup_logging(cfg.logging.level, cfg.logging.file)
+
+    if not cfg.citations.enabled:
+        click.echo(
+            "Error: citations.enabled=false in config. "
+            "Set it to true and configure citations:* before running this command.",
+            err=True,
+        )
+        sys.exit(1)
+
+    provider = create_citation_provider(cfg.citations)
+    if provider is None:
+        click.echo(
+            f"Error: could not construct citation provider "
+            f"(provider={cfg.citations.provider!r}). Check config.",
+            err=True,
+        )
+        sys.exit(1)
+
+    db = PaperDatabase(cfg.storage.db_path)
+    scorer = ClaudeScorer(config=cfg.scoring)
+
+    stale_after = None
+    if stale_days is not None:
+        stale_after = stale_days * 24.0
+
+    result = refresh_and_rescore(
+        db,
+        provider,
+        scorer,
+        cfg.citations,
+        force_all=force_all,
+        stale_after_hours=stale_after,
+    )
+    click.echo(
+        f"\n✅ Refreshed {result.citations_updated} citation(s); "
+        f"re-scored {result.rescored} paper(s)."
+    )
+
+
 if __name__ == "__main__":
     cli()

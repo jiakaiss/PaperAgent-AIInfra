@@ -74,6 +74,10 @@ scoring:
   # 建议两者之和为 1.0，不为 1.0 时会输出警告但仍可使用
   relevance_weight: 0.6          # 相关性权重
   quality_weight: 0.4            # 质量权重
+  # citation_weight：引用数对排序的影响。0.0（默认）= 引用不参与排序，
+  # 与本变更前完全一致。> 0 时启用「同 tier、同 total_score」的引用 tiebreaker
+  # （不进入 total_score 公式，仅作排序兜底）。需同时启用 citations.enabled。
+  citation_weight: 0.0
 
   # ─── Prompt 自定义（可选） ───
   # 留空或未设置时使用内置默认 prompt
@@ -114,6 +118,66 @@ thresholds:
   min_tier: solid                # 影响力阈值；"breakthrough" = 仅重磅工作，
                                  # "solid"（默认）= 排除渐进改进，
                                  # "incremental" = 包含全部。
+  # 重要老作分区（重要老作 / Important Older Works）。
+  # > 0 时每次推送在常规论文之外额外附带 N 篇高引老论文（不占用 top_n 名额）。
+  # 默认 0 = 关闭。需同时启用 citations.enabled。
+  older_works_per_digest: 0
+  # 老作引用数门槛：S2 引用数 ≥ 该值的老论文才会被视为「重要老作」候选。
+  min_citations_for_older_works: 100
+
+# ─── 引用数采集与动态评分（可选，默认关闭） ───
+# 启用后会做三件事：
+#   1) 周期性从 Semantic Scholar 拉取每篇缓存论文的引用数；
+#   2) 引用数显著上涨时，让 Claude 重新评估 relevance/quality/tier
+#      （total_score 公式不变，但分数随重判结果动态变化）；
+#   3) 每次 ingest 反向发现高引老论文，加入「重要老作」分区。
+# 默认 enabled=false 等于全部禁用，行为与本变更前完全一致。
+citations:
+  enabled: false                          # 一键启用所有引用相关功能
+  provider: semantic_scholar              # 当前仅支持 semantic_scholar
+
+  # ── 数据源连接 ──
+  # api_key: 留空也能用（公开配额 ~100 req/min），有 key 时配额更高
+  # api_key: ${S2_API_KEY}
+  base_url: https://api.semanticscholar.org/graph/v1
+  request_timeout: 15.0                   # 单请求超时（秒）
+  batch_size: 50                          # S2 batch 接口一次问几篇
+  requests_per_second: 1.0                # S2 限速，太高会被 429
+
+  # ── 刷新节奏 ──
+  refresh_interval_hours: 24              # 多久采一次引用数
+  refresh_candidate_limit: 500            # 每次刷新最多看几篇候选
+
+  # ── 排序 tiebreaker ──
+  # 引用数归一化到 0-10 的 log 上限。降到 200 = 中等引用就能拉开差距；
+  # 升到 5000 = 只有大热门才显著影响排序。仅在 citation_weight > 0 时生效。
+  normalization_ceiling: 1000
+
+  # ── 动态重判（成本敏感）──
+  # 触发条件：引用涨幅 ≥ rescore_min_delta 或 ≥ rescore_min_ratio。
+  # 成本上限：每次刷新最多 rescore_max_per_run 篇 × 每篇最少间隔 rescore_min_interval_days 天。
+  # 设 rescore_max_per_run: 0 完全关闭重判（仍会采集引用数）。
+  rescore_min_delta: 50                   # 引用涨幅绝对门槛
+  rescore_min_ratio: 0.2                  # 引用涨幅相对门槛（20%）
+  rescore_max_per_run: 20                 # 每次最多重判几篇（0 = 关闭）
+  rescore_min_interval_days: 7            # 同一篇最小重判间隔
+
+  # ── 老作发现 ──
+  older_works_min_age_years: 2            # 至少这么多年以前的论文才算「老作」（下限）
+  # 最多多少年以前的论文还能算候选。默认 10 年挡掉 1990s/2000s 的学术
+  # 老作（MapReduce/Dryad 之类与今天 AI Infra 关联很弱）。Transformer
+  # (2017)、Adam (2014) 这类基础工作仍在窗口内。设大于等于 min。
+  older_works_max_age_years: 10
+  older_works_max_new_per_ingest: 20      # 每次 ingest 最多打分多少新发现的老作
+  older_works_search_page_size: 20        # 每个领域 keyword 取多少 S2 候选
+  # 每个 sub_domain 用多少 keyword 变体搜（取自 SUB_DOMAINS dict）。
+  # 比如 quantization → ["quantization", "PTQ", "QAT", ...] 取前 N 个。
+  # 调高捞得更全（同义词覆盖好），但 S2 调用数线性涨。
+  older_works_keywords_per_sub_domain: 3
+  # 已缓存的 fresh 论文引用涨到该值且年龄 >= older_works_min_age_years 时,
+  # 自动翻牌为 paper_kind="older"。比 min_citations_for_older_works
+  # 高一档（discovery 入门 100, 翻牌要 500）— 翻牌是更强的断言。
+  older_works_promote_min_citations: 500
 
 # ─── Web 订阅配置 ───
 subscriptions:

@@ -19,6 +19,7 @@ SENTINEL_SMTP_PASSWORD = "unique-smtp-secret-123"
 SENTINEL_API_KEY = "sk-test-unique-key-456"
 SENTINEL_UNSUBSCRIBE_SECRET = "hmac-unique-789"
 SENTINEL_ACCESS_CODE = "code-unique-abc"
+SENTINEL_CITATIONS_API_KEY = "s2-secret-xyz-123"
 
 NOT_SENTINEL = object()
 
@@ -58,6 +59,10 @@ def config_factory(tmp_path: Path):
                 "unsubscribe": {
                     "secret": SENTINEL_UNSUBSCRIBE_SECRET,
                 },
+            },
+            citations={
+                "enabled": True,
+                "api_key": SENTINEL_CITATIONS_API_KEY,
             },
             users=[],
         )
@@ -247,6 +252,30 @@ class TestPanels:
         assert "breakthrough" in resp.text
         assert "serving" in resp.text or "quantization" in resp.text
 
+    def test_papers_panel_shows_citation_coverage_when_enabled(self, client):
+        """Citation panel renders coverage stats when citations.enabled=true."""
+        resp = self._auth_get(client, "/admin/_papers")
+        assert resp.status_code == 200
+        assert "引用数采集" in resp.text
+        assert "已采集引用数" in resp.text
+        assert "semantic_scholar" in resp.text
+        # The "未启用" text must NOT appear when enabled
+        assert "未启用" not in resp.text
+
+    def test_papers_panel_shows_disabled_message(self, config_factory, populated_db):
+        """When citations.enabled=false, the panel shows the 未启用 line and no stats."""
+        cfg = config_factory(admin_enabled=True, admin_password="hunter2")
+        cfg.storage.db_path = str(populated_db)
+        cfg.citations.enabled = False
+        app = create_app(cfg)
+        local_client = TestClient(app)
+
+        resp = self._auth_get(local_client, "/admin/_papers")
+        assert resp.status_code == 200
+        assert "引用数采集未启用" in resp.text
+        # No coverage numbers when disabled
+        assert "已采集引用数" not in resp.text
+
     def test_system_panel(self, client):
         resp = self._auth_get(client, "/admin/_system")
         assert resp.status_code == 200
@@ -298,6 +327,7 @@ class TestSecrets:
         SENTINEL_API_KEY,
         SENTINEL_UNSUBSCRIBE_SECRET,
         SENTINEL_ACCESS_CODE,
+        SENTINEL_CITATIONS_API_KEY,
     ]
     ALL_ADMIN_URLS = [
         "/admin",
