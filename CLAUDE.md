@@ -232,7 +232,7 @@ Users can subscribe to paper digests via the `/subscribe` web form. Subscription
 - `config.web.public_base_url` is copied into `notify.email.web_url` at conversion time (same non-persisted pattern) so digest emails render a "🔗 在网页中浏览全部论文" header link near the top
 - Thresholds are copied from global `config.thresholds` at conversion time
 
-**Important**: Changes to `config.email`, `config.web.public_base_url`, or `config.thresholds` in `config.yaml` require app restart to affect existing subscription users. New subscriptions will use the updated config immediately.
+**Important**: New subscriptions are picked up by the running scheduler daemon at its next scheduled tick — `Pipeline.refresh_users()` runs at the top of every `run_ingest` and `run_digest` job, reconciling `config.users` against the active subscriptions table without requiring a restart. However, changes to `config.email`, `config.web.public_base_url`, or `config.thresholds` in `config.yaml` still require app restart to affect existing subscription users (the refresh deliberately leaves already-loaded users' notifier instances untouched so SMTP credential snapshots are stable). New subscriptions added after a `config.yaml` change will use the updated config immediately.
 
 ### Notifier Plugins (`notifier/`)
 
@@ -300,11 +300,13 @@ The configuration uses a **subscription-based user model** — all paper recipie
 3. Check logs for warnings: "Email config enabled but missing fields" or "Global email config not configured"
 4. Test SMTP credentials manually: `paper-agent test --notifier email --user <subscription_email>`
 5. Verify the subscription exists: check `subscriptions` table in database or use `paper-agent stats`
+6. Check the daemon's `refresh_users` log lines — every scheduled ingest/digest tick logs `refresh_users: +N added, -M removed, K active` when the set changes. If the user subscribed less than one ingest cycle ago, the daemon may simply not have ticked yet — wait for the next `schedule.digest_hour` (or `ingest_interval_minutes`).
 
 **Common causes**:
 - `config.email.enabled=false` or missing SMTP credentials → subscription rejected at creation time
-- SMTP credentials changed after subscription → existing users still use old credentials (restart app to update)
+- SMTP credentials changed after subscription → existing users still use old credentials (restart app to update; the per-tick refresh deliberately preserves existing notifier instances)
 - Invalid SMTP credentials → check email notifier logs for "Failed to send email" errors
 - Firewall/network issues → test SMTP connectivity from the server
+- User subscribed between two daemon ticks → wait for the next scheduled run; the daemon refreshes its user list at the top of every ingest and digest job, so a process restart is NOT needed
 
 **Solution**: Ensure `config.email` is properly configured with valid SMTP credentials before users subscribe. If credentials change, restart the app to update existing subscription users.

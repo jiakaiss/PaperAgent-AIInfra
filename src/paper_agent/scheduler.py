@@ -91,6 +91,11 @@ def start_daemon(
 
     def run_ingest():
         logger.info("Scheduled ingest started...")
+        # Refresh subscription users before each tick so newly-subscribed
+        # web users get picked up without a daemon restart. The refresh
+        # itself is exception-safe (degrades to previous list); any other
+        # error in ingest is still caught by the outer handler below.
+        pipeline.refresh_users()
         try:
             pipeline.ingest()
         except Exception as e:
@@ -104,6 +109,7 @@ def start_daemon(
 
     def run_digest():
         logger.info("Scheduled digest started...")
+        pipeline.refresh_users()
         try:
             pipeline.run_cached_digest(user_ids=user_ids)
         except Exception as e:

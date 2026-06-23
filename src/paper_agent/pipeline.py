@@ -66,6 +66,81 @@ class Pipeline:
                     f"User '{user.user_id}' has no enabled notifiers. Check their notify config."
                 )
 
+    def refresh_users(self) -> dict[str, int]:
+        """Reconcile in-memory users with the active subscriptions table.
+
+        Daemon processes load subscriptions once at startup; web subscriptions
+        added afterwards are invisible to them until restart. Calling this at
+        the top of each scheduled job fixes that: rows in the database but
+        not in :attr:`config.users` are appended (with new notifiers), and
+        users in :attr:`config.users` that have no matching active subscription
+        are dropped (their notifier entry is removed too).
+
+        Users present in both are left untouched — we deliberately do NOT
+        rebuild notifiers for existing users, so any SMTP connection state
+        snapshotted at process start survives the refresh. Changes to
+        ``config.email`` still require a daemon restart, as documented in
+        CLAUDE.md.
+
+        Database read failures degrade gracefully: a warning is logged and
+        the previously-loaded user list is left intact so the scheduled job
+        can still run.
+
+        Returns a small dict ``{"added": N, "removed": M, "active": K}`` for
+        logging / tests.
+        """
+        from paper_agent.subscriptions import build_user_config_for_subscription
+
+        try:
+            subscriptions = self.db.load_active_subscriptions()
+        except Exception as exc:
+            logger.warning(
+                "Subscription refresh failed; using previous user list "
+                f"({len(self.config.users)} users): {exc}"
+            )
+            return {"added": 0, "removed": 0, "active": len(self.config.users)}
+
+        active_ids = {sub["email"] for sub in subscriptions}
+        existing_ids = {u.user_id for u in self.config.users}
+
+        # Drop departed users (unsubscribed since last tick).
+        removed = 0
+        if existing_ids - active_ids:
+            kept: list[UserConfig] = []
+            for user in self.config.users:
+                if user.user_id in active_ids:
+                    kept.append(user)
+                else:
+                    self.user_notifiers.pop(user.user_id, None)
+                    removed += 1
+                    logger.info(f"refresh_users: dropped subscription user '{user.user_id}'")
+            self.config.users = kept
+
+        # Append new users (subscribed since last tick).
+        added = 0
+        for sub in subscriptions:
+            email = sub["email"]
+            if email in existing_ids:
+                continue
+            user_cfg = build_user_config_for_subscription(sub, self.config)
+            self.config.users.append(user_cfg)
+            notifiers = create_notifiers_for_user(user_cfg.notify)
+            if notifiers:
+                self.user_notifiers[email] = notifiers
+            else:
+                logger.warning(
+                    f"User '{email}' has no enabled notifiers. Check their notify config."
+                )
+            added += 1
+            logger.info(f"refresh_users: added subscription user '{email}'")
+
+        if added or removed:
+            logger.info(
+                f"refresh_users: +{added} added, -{removed} removed, "
+                f"{len(self.config.users)} active"
+            )
+        return {"added": added, "removed": removed, "active": len(self.config.users)}
+
     def _build_superset_keywords(self, config: AppConfig) -> list[str]:
         """Build keywords for arXiv search.
 
