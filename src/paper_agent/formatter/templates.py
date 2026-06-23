@@ -278,13 +278,20 @@ def _older_works_section(papers: list[ScoredPaper], start_index: int) -> str:
     return header + "".join(rows)
 
 
-def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> str:
+def format_email_html(
+    papers: list[ScoredPaper], unsubscribe_url: str = "", web_url: str = ""
+) -> str:
     """Format papers as HTML email grouped by impact tier.
 
     Splits the input by ``paper_kind`` so the older-works track gets its own
     visually-distinct section after the regular tier groups. Callers don't
     need to think about the split — they pass everything in one list and
     the formatter routes papers based on their stored ``paper_kind``.
+
+    When ``web_url`` is non-empty, a "🔗 在网页中浏览全部论文" link is rendered
+    in the header block above the date/count line so recipients can jump
+    from any digest straight into the Paper Agent web UI. Empty ``web_url``
+    keeps the header byte-identical to the pre-change output.
     """
     if not papers:
         return "<p>今日无符合条件的高质量 AI Infra 论文。</p>"
@@ -303,6 +310,16 @@ def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> s
         sections.append(_older_works_section(older, idx))
         idx += len(older)
 
+    web_link_html = ""
+    if web_url:
+        web_link_html = f"""
+    <p style="margin:8px 0 12px; font-size:14px;">
+        🔗 <a href="{web_url}" style="color:#1a73e8; text-decoration:none;
+                                       font-weight:600;">
+            在网页中浏览全部论文 →
+        </a>
+    </p>"""
+
     unsubscribe_html = ""
     if unsubscribe_url:
         unsubscribe_html = f"""
@@ -317,7 +334,7 @@ def format_email_html(papers: list[ScoredPaper], unsubscribe_url: str = "") -> s
              max-width: 800px; margin: 0 auto; padding: 20px;">
     <h1 style="color:#1a73e8; border-bottom:2px solid #1a73e8; padding-bottom:10px;">
         🤖 AI Infra 论文日报
-    </h1>
+    </h1>{web_link_html}
     <p style="color:#666;">📅 {date_str} | 共筛选出 <strong>{len(papers)}</strong> 篇高质量论文</p>
     <table style="width:100%; border-collapse:collapse;">
         {"".join(sections)}

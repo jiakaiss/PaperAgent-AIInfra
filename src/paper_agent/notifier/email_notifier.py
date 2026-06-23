@@ -30,7 +30,11 @@ class EmailNotifier:
         msg["From"] = self.config.sender or self.config.smtp_user
         msg["To"] = ", ".join(self.config.recipients)
 
-        html_content = format_email_html(papers, unsubscribe_url=self.config.unsubscribe_url)
+        html_content = format_email_html(
+            papers,
+            unsubscribe_url=self.config.unsubscribe_url,
+            web_url=self.config.web_url,
+        )
         msg.attach(MIMEText(html_content, "html", "utf-8"))
 
         return msg

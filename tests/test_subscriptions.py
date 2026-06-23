@@ -52,6 +52,29 @@ def test_build_subscription_email_config_copies_global_smtp_fields():
         "sender": "noreply@example.com",
         "use_tls": False,
         "unsubscribe_url": "",
+        "web_url": "",
+    }
+
+
+def test_build_subscription_email_config_propagates_web_url():
+    config = build_subscription_email_config(
+        "user@example.com",
+        _email_config(),
+        web_url="https://papers.example.com/",
+    )
+    assert config["web_url"] == "https://papers.example.com/"
+
+
+def test_build_subscription_email_config_disabled_keeps_web_url_when_set():
+    config = build_subscription_email_config(
+        "user@example.com",
+        _email_config(enabled=False),
+        web_url="https://papers.example.com/",
+    )
+    assert config == {
+        "enabled": False,
+        "recipients": ["user@example.com"],
+        "web_url": "https://papers.example.com/",
     }
 
 
@@ -76,3 +99,14 @@ def test_subscription_to_user_config_uses_shared_email_config_builder():
     assert user.notify.email.recipients == ["user@example.com"]
     assert user.notify.email.smtp_port == 465
     assert user.notify.email.smtp_user == "system@example.com"
+
+
+def test_subscription_to_user_config_copies_web_url():
+    """The web URL plumbed in by load_subscriptions_into_config must land on the user."""
+    user = subscription_to_user_config(
+        "user@example.com",
+        ["quantization"],
+        _email_config(),
+        web_url="https://papers.example.com/",
+    )
+    assert user.notify.email.web_url == "https://papers.example.com/"
