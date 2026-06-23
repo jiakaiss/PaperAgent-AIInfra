@@ -111,6 +111,44 @@ def subscription_to_user_config(
     )
 
 
+def build_user_config_for_subscription(
+    sub: dict,
+    config: AppConfig,
+    *,
+    warn: bool = True,
+) -> UserConfig:
+    """Build a :class:`UserConfig` for one subscription row.
+
+    Centralizes the URL + thresholds + email-config wiring so that startup
+    loading and per-tick refresh produce identical UserConfig objects. The
+    *warn* flag controls whether missing-config warnings are emitted; the
+    daemon's tick refresh sets it to ``False`` for users it already
+    constructed at startup, so logs aren't spammed every tick.
+    """
+    email = sub["email"]
+    if warn and not is_email_configured(config.email):
+        logger.warning(
+            "Global email config not configured, "
+            f"subscription user '{email}' will not receive emails"
+        )
+    unsubscribe_url = build_unsubscribe_url(
+        email,
+        config.web.public_base_url,
+        config.subscriptions.unsubscribe.secret,
+    )
+    if warn and not unsubscribe_url:
+        logger.warning(f"Unsubscribe link not configured for subscription user '{email}'")
+    return subscription_to_user_config(
+        email,
+        sub["sub_domains"],
+        config.email,
+        default_top_n=config.subscriptions.default_top_n,
+        unsubscribe_url=unsubscribe_url,
+        web_url=config.web.public_base_url,
+        thresholds_config=config.thresholds,
+    )
+
+
 def load_subscriptions_into_config(config: AppConfig) -> int:
     """Load active subscription rows into ``config.users``.
 
@@ -135,29 +173,7 @@ def load_subscriptions_into_config(config: AppConfig) -> int:
         email = sub["email"]
         if email in existing_user_ids:
             continue
-        if not is_email_configured(config.email):
-            logger.warning(
-                "Global email config not configured, "
-                f"subscription user '{email}' will not receive emails"
-            )
-        unsubscribe_url = build_unsubscribe_url(
-            email,
-            config.web.public_base_url,
-            config.subscriptions.unsubscribe.secret,
-        )
-        if not unsubscribe_url:
-            logger.warning(f"Unsubscribe link not configured for subscription user '{email}'")
-        config.users.append(
-            subscription_to_user_config(
-                email,
-                sub["sub_domains"],
-                config.email,
-                default_top_n=config.subscriptions.default_top_n,
-                unsubscribe_url=unsubscribe_url,
-                web_url=config.web.public_base_url,
-                thresholds_config=config.thresholds,
-            )
-        )
+        config.users.append(build_user_config_for_subscription(sub, config))
         existing_user_ids.add(email)
         logger.info(f"Loaded subscription user '{email}' from database")
 

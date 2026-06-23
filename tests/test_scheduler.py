@@ -42,6 +42,7 @@ class FakePipeline:
         self.config = config
         self.ingest_calls = 0
         self.digest_calls = 0
+        self.refresh_calls = 0
         FakePipeline.instances.append(self)
 
     def ingest(self):
@@ -49,6 +50,12 @@ class FakePipeline:
 
     def run_cached_digest(self, user_ids=None):
         self.digest_calls += 1
+
+    def refresh_users(self):
+        # Mirror the real Pipeline.refresh_users contract — scheduler calls
+        # this at the top of every tick to pick up newly-subscribed users.
+        self.refresh_calls += 1
+        return {"added": 0, "removed": 0, "active": 0}
 
 
 def _make_config(tmp_path) -> AppConfig:

@@ -1134,3 +1134,149 @@ def test_mark_sent_on_partial_notifier_success(mock_scorer_cls, mock_fetcher_cls
         assert "001" not in unsent
     finally:
         os.unlink(db_path)
+
+
+# ─── Pipeline.refresh_users() — daemon picks up new subscriptions per tick ───
+
+
+def _email_enabled_config() -> EmailNotifierConfig:
+    """Email config that passes is_email_configured() so notifiers build."""
+    return EmailNotifierConfig(
+        enabled=True,
+        smtp_host="smtp.example.com",
+        smtp_port=587,
+        smtp_user="system@example.com",
+        smtp_password="secret",
+        sender="noreply@example.com",
+        use_tls=True,
+    )
+
+
+def _refresh_test_config(db_path: str) -> AppConfig:
+    """AppConfig wired with email enabled so subscription users get notifiers."""
+    return AppConfig(
+        fetch=FetchConfig(max_results=10, days_back=3),
+        scoring=ScoringConfig(batch_size=5),
+        email=_email_enabled_config(),
+        users=[],
+        schedule=ScheduleConfig(enabled=False),
+        storage=StorageConfig(db_path=db_path),
+    )
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_refresh_users_appends_new_subscription(mock_scorer_cls, mock_fetcher_cls):
+    """Subscription inserted after Pipeline construction is picked up on refresh."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = _refresh_test_config(db_path)
+        pipeline = Pipeline(config)
+        # Subscription inserted *after* the pipeline was built — exactly the
+        # daemon's situation when a user subscribes via the web form.
+        pipeline.db.add_subscription("new@example.com", ["quantization"])
+
+        result = pipeline.refresh_users()
+
+        assert "new@example.com" in pipeline.user_notifiers
+        assert "new@example.com" in {u.user_id for u in pipeline.config.users}
+        assert result == {"added": 1, "removed": 0, "active": 1}
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_refresh_users_drops_inactive(mock_scorer_cls, mock_fetcher_cls):
+    """Refresh drops unsubscribed users and preserves existing notifier identity."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = _refresh_test_config(db_path)
+        pipeline = Pipeline(config)
+        pipeline.db.add_subscription("alice@example.com", ["quantization"])
+        pipeline.db.add_subscription("bob@example.com", ["distillation"])
+        pipeline.refresh_users()
+        # Capture the notifier instance for the user that will survive,
+        # so we can prove it isn't rebuilt by the second refresh.
+        alice_notifiers_before = pipeline.user_notifiers["alice@example.com"]
+
+        # Bob unsubscribes.
+        pipeline.db.unsubscribe_email("bob@example.com")
+        result = pipeline.refresh_users()
+
+        assert "bob@example.com" not in pipeline.user_notifiers
+        assert "bob@example.com" not in {u.user_id for u in pipeline.config.users}
+        assert "alice@example.com" in pipeline.user_notifiers
+        # Identity check — alice's notifier instance survived untouched.
+        assert pipeline.user_notifiers["alice@example.com"] is alice_notifiers_before
+        assert result["removed"] == 1
+        assert result["active"] == 1
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_refresh_users_survives_db_error(mock_scorer_cls, mock_fetcher_cls, caplog):
+    """DB read failure during refresh logs a warning and leaves state intact."""
+    import logging
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = _refresh_test_config(db_path)
+        pipeline = Pipeline(config)
+        pipeline.db.add_subscription("alice@example.com", ["quantization"])
+        pipeline.refresh_users()
+        snapshot_users = list(pipeline.config.users)
+        snapshot_notifiers = dict(pipeline.user_notifiers)
+
+        # Force the next DB read to raise.
+        with patch.object(
+            pipeline.db,
+            "load_active_subscriptions",
+            side_effect=RuntimeError("database is locked"),
+        ):
+            with caplog.at_level(logging.WARNING, logger="paper_agent.pipeline"):
+                result = pipeline.refresh_users()
+
+        assert pipeline.config.users == snapshot_users
+        assert pipeline.user_notifiers == snapshot_notifiers
+        assert result == {"added": 0, "removed": 0, "active": 1}
+        assert any("Subscription refresh failed" in rec.message for rec in caplog.records)
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_pipeline_cached_digest_after_subscription_insert(mock_scorer_cls, mock_fetcher_cls):
+    """Subscription inserted between two digest calls is delivered on the second."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        config = _refresh_test_config(db_path)
+        pipeline = Pipeline(config)
+        pipeline.db.cache_papers([_make_scored_paper("001", tags=("quantization",))])
+
+        # First call: no subscribers yet → no results.
+        pipeline.refresh_users()
+        first = pipeline.run_cached_digest(dry_run=True)
+        assert first == {}
+
+        # Subscription appears after the first call — simulates web POST
+        # arriving between two daemon ticks.
+        pipeline.db.add_subscription("late@example.com", ["quantization"])
+        pipeline.refresh_users()
+        second = pipeline.run_cached_digest(dry_run=True)
+
+        assert "late@example.com" in second
+        assert [sp.paper.arxiv_id for sp in second["late@example.com"]] == ["001"]
+    finally:
+        os.unlink(db_path)
