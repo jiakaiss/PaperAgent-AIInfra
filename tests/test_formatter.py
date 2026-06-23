@@ -56,6 +56,32 @@ def test_format_email_html():
     assert "distributed_training" in html
 
 
+def test_format_email_html_includes_web_link_when_set():
+    """web_url ⇒ a 'browse on web' link appears in the header block."""
+    html = format_email_html([_make_scored_paper(1)], web_url="https://papers.example.com/")
+    assert 'href="https://papers.example.com/"' in html
+    assert "在网页中浏览全部论文" in html
+
+
+def test_format_email_html_omits_web_link_when_empty():
+    """Default web_url='' ⇒ no header web-UI link, body unchanged from pre-change output."""
+    html = format_email_html([_make_scored_paper(1)])
+    assert "在网页中浏览全部论文" not in html
+
+
+def test_format_email_html_web_link_and_unsubscribe_link_coexist():
+    """Both URLs render independently — header link top, unsubscribe footer bottom."""
+    html = format_email_html(
+        [_make_scored_paper(1)],
+        unsubscribe_url="https://papers.example.com/unsubscribe?email=x&token=y",
+        web_url="https://papers.example.com/",
+    )
+    assert "在网页中浏览全部论文" in html
+    assert "取消订阅" in html
+    # Header link appears before unsubscribe footer.
+    assert html.index("在网页中浏览全部论文") < html.index("取消订阅")
+
+
 def test_email_html_uses_times_and_yahei():
     """Email body should declare Times New Roman (English) + Microsoft YaHei (Chinese)."""
     html = format_email_html([_make_scored_paper(1)])

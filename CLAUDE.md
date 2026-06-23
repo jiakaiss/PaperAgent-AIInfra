@@ -229,9 +229,10 @@ Users can subscribe to paper digests via the `/subscribe` web form. Subscription
 - At startup, `_load_subscriptions_into_config()` loads active subscriptions and creates `UserConfig` objects
 - Each subscription user has `notify.email.enabled=true` and `notify.email.recipients=[email]`
 - SMTP credentials are copied from `config.email` at conversion time (not stored in database)
+- `config.web.public_base_url` is copied into `notify.email.web_url` at conversion time (same non-persisted pattern) so digest emails render a "🔗 在网页中浏览全部论文" header link near the top
 - Thresholds are copied from global `config.thresholds` at conversion time
 
-**Important**: Changes to `config.email` or `config.thresholds` in `config.yaml` require app restart to affect existing subscription users. New subscriptions will use the updated config immediately.
+**Important**: Changes to `config.email`, `config.web.public_base_url`, or `config.thresholds` in `config.yaml` require app restart to affect existing subscription users. New subscriptions will use the updated config immediately.
 
 ### Notifier Plugins (`notifier/`)
 

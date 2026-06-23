@@ -166,6 +166,8 @@ scripts/restore.sh deploy/backups/paper_agent-YYYYMMDD-HHMMSS.db
 
 所有用户都通过 Web 表单订阅，记录保存在数据库 `subscriptions` 表中。应用启动时会把 active subscriptions 转换成运行时 `UserConfig`，并从全局 `email` 配置继承 SMTP 凭据、从全局 `thresholds` 继承推送阈值。
 
+> 💡 设置 `web.public_base_url` 后，每封日报邮件顶部都会出现「🔗 在网页中浏览全部论文」链接，方便订阅用户一键跳转到 Web UI 浏览更多论文。修改该字段后需要重启应用，已有订阅用户的邮件链接才会更新。
+
 ```yaml
 email:
   enabled: true

@@ -245,6 +245,54 @@ def test_load_subscriptions_multiple_with_smtp(db):
         assert user.notify.email.smtp_password == "secret"
 
 
+def test_load_subscriptions_copies_web_url_from_public_base_url(db):
+    """Each loaded subscription user gets config.web.public_base_url as web_url."""
+    from paper_agent.config import AppConfig, EmailNotifierConfig, WebConfig
+    from paper_agent.subscriptions import load_subscriptions_into_config
+
+    db.add_subscription("user1@example.com", ["quantization"])
+    db.add_subscription("user2@example.com", ["moe"])
+
+    config = AppConfig(
+        storage={"db_path": str(db.db_path)},
+        email=EmailNotifierConfig(
+            enabled=True,
+            smtp_host="smtp.example.com",
+            smtp_user="system@example.com",
+            smtp_password="secret",
+        ),
+        web=WebConfig(public_base_url="https://papers.example.com"),
+    )
+
+    load_subscriptions_into_config(config)
+
+    assert len(config.users) == 2
+    for user in config.users:
+        assert user.notify.email.web_url == "https://papers.example.com"
+
+
+def test_load_subscriptions_web_url_empty_when_public_base_url_unset(db):
+    """No public_base_url ⇒ user's web_url stays empty (graceful default)."""
+    from paper_agent.config import AppConfig, EmailNotifierConfig
+    from paper_agent.subscriptions import load_subscriptions_into_config
+
+    db.add_subscription("user@example.com", ["quantization"])
+
+    config = AppConfig(
+        storage={"db_path": str(db.db_path)},
+        email=EmailNotifierConfig(
+            enabled=True,
+            smtp_host="smtp.example.com",
+            smtp_user="system@example.com",
+            smtp_password="secret",
+        ),
+    )
+
+    load_subscriptions_into_config(config)
+
+    assert config.users[0].notify.email.web_url == ""
+
+
 def test_unsubscribe_email_marks_inactive(db):
     """Unsubscribe keeps row but marks it inactive."""
     db.add_subscription("user@example.com", ["quantization"])

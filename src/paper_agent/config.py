@@ -185,6 +185,7 @@ class EmailNotifierConfig(BaseModel):
     recipients: list[str] = []
     use_tls: bool = True
     unsubscribe_url: str = ""
+    web_url: str = ""
 
 
 # ─── Per-user configuration (internal models, used by subscription system) ───

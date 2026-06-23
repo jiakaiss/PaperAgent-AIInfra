@@ -41,12 +41,15 @@ def build_subscription_email_config(
     email: str,
     global_email: EmailNotifierConfig,
     unsubscribe_url: str = "",
+    web_url: str = "",
 ) -> dict:
     """Build a per-user email notify config for a subscription recipient."""
     if not is_email_configured(global_email):
         config = {"enabled": False, "recipients": [email]}
         if unsubscribe_url:
             config["unsubscribe_url"] = unsubscribe_url
+        if web_url:
+            config["web_url"] = web_url
         return config
     return {
         "enabled": True,
@@ -58,6 +61,7 @@ def build_subscription_email_config(
         "sender": global_email.sender,
         "use_tls": global_email.use_tls,
         "unsubscribe_url": unsubscribe_url,
+        "web_url": web_url,
     }
 
 
@@ -75,6 +79,7 @@ def subscription_to_user_config(
     global_email: EmailNotifierConfig,
     default_top_n: int = 10,
     unsubscribe_url: str = "",
+    web_url: str = "",
     thresholds_config: object | None = None,
 ) -> UserConfig:
     """Convert a subscription record into a runtime UserConfig.
@@ -99,7 +104,9 @@ def subscription_to_user_config(
         user_id=email,
         display_name=email,
         subscriptions={"sub_domains": list(sub_domains)},
-        notify={"email": build_subscription_email_config(email, global_email, unsubscribe_url)},
+        notify={
+            "email": build_subscription_email_config(email, global_email, unsubscribe_url, web_url)
+        },
         thresholds=thresholds,
     )
 
@@ -147,6 +154,7 @@ def load_subscriptions_into_config(config: AppConfig) -> int:
                 config.email,
                 default_top_n=config.subscriptions.default_top_n,
                 unsubscribe_url=unsubscribe_url,
+                web_url=config.web.public_base_url,
                 thresholds_config=config.thresholds,
             )
         )
