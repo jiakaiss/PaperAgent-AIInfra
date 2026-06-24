@@ -382,6 +382,17 @@ code {
     margin-bottom: 0.3rem;
 }
 
+/* Right-aligned cluster for tier / older-works / citation badges.
+ * Owning the inter-badge spacing here (via gap) keeps the layout identical
+ * regardless of which badges are present — the per-badge margins this
+ * replaced used to drift out of alignment between cards. */
+.paper-card-header-badges {
+    display: inline-flex;
+    gap: 0.25rem;
+    align-items: center;
+    flex-shrink: 0;
+}
+
 .tier-badge {
     flex-shrink: 0;
     font-size: 0.72rem;
@@ -407,7 +418,7 @@ code {
     color: #9ca3af;
 }
 
-/* Citation count badge — sits next to the tier badge in the card header. */
+/* Citation count badge — sits inside the right-aligned header badge cluster. */
 .citation-badge {
     display: inline-block;
     padding: 2px 8px;
@@ -416,7 +427,6 @@ code {
     border-radius: 12px;
     font-size: 0.78rem;
     font-weight: 600;
-    margin-left: 4px;
     white-space: nowrap;
 }
 
@@ -427,7 +437,6 @@ code {
     border-radius: 12px;
     font-size: 0.78rem;
     font-weight: 600;
-    margin-left: 4px;
     white-space: nowrap;
 }
 .paper-kind-older {
@@ -531,6 +540,13 @@ code {
     font-size: 0.85rem;
     color: var(--color-text-muted);
     margin-bottom: 0.4rem;
+}
+
+/* Publication date — rendered inline at the end of the authors line. */
+.paper-published {
+    color: var(--color-text-muted);
+    font-size: 0.82rem;
+    margin-left: 0.25rem;
 }
 
 .paper-summary {

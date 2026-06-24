@@ -15,13 +15,13 @@ from paper_agent.storage.database import PaperDatabase
 from paper_agent.web.app import create_app
 
 
-def _scored(arxiv_id: str, *, citations=0, paper_kind="fresh") -> ScoredPaper:
+def _scored(arxiv_id: str, *, citations=0, paper_kind="fresh", published=None) -> ScoredPaper:
     paper = Paper(
         arxiv_id=arxiv_id,
         title=f"Title {arxiv_id}",
         authors=["A"],
         abstract="abs",
-        published=datetime(2024, 1, 1),
+        published=published or datetime(2024, 1, 1),
         categories=["cs.LG"],
         pdf_url=f"p/{arxiv_id}",
         abs_url=f"a/{arxiv_id}",
@@ -97,8 +97,34 @@ def test_older_paper_card_shows_both_badges(client_two_papers):
     assert "📈 1500 citations" in resp.text
 
 
-def test_legacy_zero_citation_fresh_paper_shows_neither_badge(client_two_papers):
-    """A normal fresh paper with citation_count=0 shows no citation/older badges."""
+def test_zero_citation_paper_still_shows_citation_badge(client_two_papers):
+    """A fresh paper with citation_count=0 now ALWAYS shows the citation badge.
+
+    Per `paper-browsing` spec (`web-paper-meta-display` change): the badge is
+    unconditional so every card has the same right-side cluster, and `0` is
+    itself a real data point ("we've refreshed and there are none yet").
+    """
     resp = client_two_papers.get("/_paper_list?older=exclude")
-    assert "🔖 重要老作" not in resp.text
-    assert "📈" not in resp.text  # no citation badge for 0-citation paper
+    assert "🔖 重要老作" not in resp.text  # not an older paper
+    assert "📈 0 citations" in resp.text  # citation badge always rendered
+
+
+def test_card_renders_published_date(client_two_papers):
+    """Each paper card renders `published` as YYYY-MM-DD on the authors line."""
+    resp = client_two_papers.get("/_paper_list")
+    # Fixture publishes both papers on 2024-01-01
+    assert "2024-01-01" in resp.text
+    assert 'class="paper-published"' in resp.text
+
+
+def test_header_badge_cluster_wrapper_present(client_two_papers):
+    """The right-aligned badge cluster wrapper exists on every card —
+    including the fresh-paper case (tier + citation only, no older badge)
+    and the older case (tier + older + citation)."""
+    # Fresh paper (no older badge): cluster still present
+    resp = client_two_papers.get("/_paper_list?older=exclude")
+    assert "paper-card-header-badges" in resp.text
+
+    # Older paper (all three badges): cluster still present
+    resp = client_two_papers.get("/_paper_list?older=only")
+    assert "paper-card-header-badges" in resp.text

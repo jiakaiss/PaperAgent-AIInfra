@@ -15,13 +15,13 @@
             </h3>
             {% set tier = sp.impact_tier or 'solid' %}
             {% set tier_labels = {'breakthrough': '重磅突破', 'solid': '稳健工作', 'incremental': '渐进改进'} %}
-            <span class="tier-badge tier-badge-{{ tier }}">{{ tier_labels[tier] }}</span>
-            {% if sp.paper_kind == 'older' %}
-            <span class="paper-kind-badge paper-kind-older" title="高引用老论文">🔖 重要老作</span>
-            {% endif %}
-            {% if sp.citation_count and sp.citation_count > 0 %}
-            <span class="citation-badge" title="Semantic Scholar 引用数">📈 {{ sp.citation_count }} citations</span>
-            {% endif %}
+            <div class="paper-card-header-badges">
+                <span class="tier-badge tier-badge-{{ tier }}">{{ tier_labels[tier] }}</span>
+                {% if sp.paper_kind == 'older' %}
+                <span class="paper-kind-badge paper-kind-older" title="高引用老论文">🔖 重要老作</span>
+                {% endif %}
+                <span class="citation-badge" title="Semantic Scholar 引用数">📈 {{ sp.citation_count or 0 }} citations</span>
+            </div>
         </div>
         <p class="paper-authors">
             {% if sp.paper.authors|length <= 3 %}
@@ -29,6 +29,7 @@
             {% else %}
                 {{ sp.paper.authors[:3] | join(', ') }} et al.
             {% endif %}
+            <span class="paper-published">· {{ sp.paper.published.strftime('%Y-%m-%d') }}</span>
         </p>
         <p class="paper-summary">{{ sp.summary_zh }}</p>
         {% if sp.key_contributions %}
