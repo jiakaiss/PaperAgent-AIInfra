@@ -8,10 +8,40 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 import arxiv
+import requests
 
 from paper_agent.models import Paper
 
 logger = logging.getLogger(__name__)
+
+# Per-request connect/read timeout enforced on every arXiv HTTP call. The
+# arxiv library (>=2.1.0) calls ``requests.Session.get(url)`` with NO timeout,
+# so a TCP connection that is accepted but never responds (arXiv overloaded /
+# dropping packets) blocks forever - which is exactly how a single ingest hung
+# the daemon for 18 days in Jul-Aug 2026. 10s to establish the connection,
+# 30s between bytes on the response body: generous for arXiv (normally <5s)
+# but bounded, so a dead connection raises ReadTimeout instead of hanging the
+# ingest thread indefinitely.
+_ARXIV_HTTP_TIMEOUT: tuple[float, float] = (10.0, 30.0)
+
+
+class _TimeoutSession(requests.Session):
+    """``requests.Session`` that injects a default per-request timeout.
+
+    ``requests`` has no native session-level default; every call site must
+    pass ``timeout=`` or it blocks forever on a stalled socket. The arxiv
+    library doesn't pass one, so we swap its internal session for this
+    subclass to make every underlying ``GET`` bounded.
+    """
+
+    def __init__(self, *args, default_timeout: tuple[float, float] = _ARXIV_HTTP_TIMEOUT, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._default_timeout = default_timeout
+
+    def request(self, method, url, **kwargs):  # type: ignore[override]
+        if not kwargs.get("timeout"):
+            kwargs["timeout"] = self._default_timeout
+        return super().request(method, url, **kwargs)
 
 
 class ArxivFetcher:
@@ -111,6 +141,11 @@ class ArxivFetcher:
         )
         # Override the deprecated export endpoint with the main API
         client.query_url_format = "https://arxiv.org/api/query?{}"
+        # The arxiv library issues ``self._session.get(url)`` with no timeout,
+        # so a stalled arXiv connection would hang this thread forever (and,
+        # via APScheduler's max_instances=1, every future ingest). Swap in a
+        # session that enforces a bounded per-request timeout instead.
+        client._session = _TimeoutSession()
 
         search = arxiv.Search(
             query=query,

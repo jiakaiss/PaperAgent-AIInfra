@@ -334,6 +334,15 @@ class ScheduleConfig(BaseModel):
     digest_hour: int = 9
     digest_minute: int = 0
     timezone: str = "Asia/Shanghai"
+    # Wall-clock budget for a single ingest run. A hung ingest holds the
+    # scheduler's single ingest instance slot (APScheduler max_instances=1),
+    # which is how the 2026-07-24 arXiv stall blocked every subsequent ingest
+    # for 18 days. The watchdog in scheduler.run_ingest aborts a run that
+    # exceeds this and releases the slot. Must exceed the slowest legitimate
+    # ingest (arXiv rate-limit backoff alone can push fetch to ~45 min) while
+    # staying well under the cron gap so a true hang only blocks a bounded
+    # number of ticks. 90 min satisfies both for the default 12h cron gap.
+    ingest_timeout_seconds: int = 5400
 
     @model_validator(mode="after")
     def _check_schedule(self) -> ScheduleConfig:
@@ -355,6 +364,8 @@ class ScheduleConfig(BaseModel):
             raise ValueError("schedule digest_hour must be between 0 and 23")
         if not 0 <= self.digest_minute <= 59:
             raise ValueError("schedule digest_minute must be between 0 and 59")
+        if self.ingest_timeout_seconds <= 0:
+            raise ValueError("schedule ingest_timeout_seconds must be positive")
         return self
 
     @property

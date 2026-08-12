@@ -1,6 +1,7 @@
 """Tests for scheduler job setup."""
 
 import json
+import threading
 
 import pytest
 
@@ -37,16 +38,33 @@ class FakeScheduler:
 
 class FakePipeline:
     instances = []
+    # Class-level hook: a test sets this to a threading.Event before calling
+    # start_daemon so the FakePipeline constructed inside start_daemon picks
+    # it up. __init__ consumes it (resets to None) so every other test stays
+    # non-blocking.
+    block_event: threading.Event | None = None
 
     def __init__(self, config):
         self.config = config
         self.ingest_calls = 0
+        self.ingest_completed = 0
         self.digest_calls = 0
         self.refresh_calls = 0
+        # When set, ingest() blocks on this event - simulates a hung ingest
+        # for the watchdog test. None (default) keeps ingest non-blocking so
+        # every other test is unaffected.
+        self.block_event = FakePipeline.block_event
+        FakePipeline.block_event = None
         FakePipeline.instances.append(self)
 
     def ingest(self):
         self.ingest_calls += 1
+        if self.block_event is not None:
+            # Simulate a hung ingest (e.g. a stalled network call). The
+            # watchdog must abandon this run and return, releasing the
+            # scheduler slot, rather than waiting forever.
+            self.block_event.wait(timeout=30)
+        self.ingest_completed += 1
 
     def run_cached_digest(self, user_ids=None):
         self.digest_calls += 1
@@ -173,3 +191,80 @@ def test_daemon_starts_when_previous_pid_is_dead(monkeypatch, tmp_path):
 
     start_daemon(config)
     assert len(FakeScheduler.instances) == 1
+
+
+def test_ingest_watchdog_aborts_hung_run_and_releases_slot(monkeypatch, tmp_path):
+    """A hung ingest must be abandoned after ``ingest_timeout_seconds`` so the
+    APScheduler instance slot (max_instances=1) is released and the next
+    scheduled tick can run. This is the defense-in-depth for the 2026-07-24
+    arXiv stall, which held that slot for 18 days and blocked every later
+    ingest. The per-request HTTP timeout in the fetcher is the primary fix;
+    this watchdog catches any *other* hang source (DB lock, Claude API, etc.).
+    """
+    import time
+
+    FakeScheduler.instances = []
+    FakePipeline.instances = []
+    monkeypatch.setattr("paper_agent.scheduler.BlockingScheduler", FakeScheduler)
+    monkeypatch.setattr("paper_agent.scheduler.Pipeline", FakePipeline)
+    monkeypatch.setattr("paper_agent.scheduler.pid_is_alive", lambda pid: False)
+    # signal.signal() only works in the main thread; start_daemon registers
+    # SIGINT/SIGTERM handlers, so neutralize it to run start_daemon in a
+    # worker thread below (which lets the test fail fast instead of hanging
+    # if the watchdog ever regresses).
+    monkeypatch.setattr("paper_agent.scheduler.signal.signal", lambda *a, **k: None)
+
+    # Arm the hang: the FakePipeline constructed inside start_daemon will
+    # pick this up and block inside ingest().
+    block_event = threading.Event()
+    FakePipeline.block_event = block_event
+
+    config = AppConfig(
+        schedule=ScheduleConfig(
+            ingest_interval_minutes=360,
+            digest_hour=9,
+            digest_minute=0,
+            ingest_timeout_seconds=1,
+        ),
+        storage=StorageConfig(db_path=str(tmp_path / "test.db")),
+    )
+
+    # Start the daemon; its initial run_ingest() will hit the 1s watchdog and
+    # return instead of hanging on the blocked ingest. start_daemon() reaching
+    # the assertion below is itself proof the slot was released.
+    def _start():
+        start_daemon(config)
+
+    # Run in a thread so the test itself can't hang if the watchdog regresses.
+    runner = threading.Thread(target=_start, daemon=True)
+    runner.start()
+    runner.join(timeout=10)
+    assert not runner.is_alive(), "start_daemon hung - watchdog did not abort the ingest"
+
+    pipeline = FakePipeline.instances[0]
+    assert pipeline.block_event is block_event
+    # The worker entered ingest() (incrementing ingest_calls) then blocked on
+    # the event before completing - so it started but never finished. Poll
+    # briefly since thread scheduling isn't instant.
+    for _ in range(20):
+        if pipeline.ingest_calls >= 1:
+            break
+        time.sleep(0.05)
+    assert pipeline.ingest_calls == 1
+    assert pipeline.ingest_completed == 0
+
+    # Heartbeat still ticked despite the timeout - the dashboard's staleness
+    # signal must reflect "scheduler is trying", not "ingest timed out".
+    hb = json.loads(heartbeat_path(config.storage.db_path).read_text(encoding="utf-8"))
+    assert hb["last_event"] == "ingest"
+
+    # Release the orphaned worker so it doesn't linger past the test.
+    block_event.set()
+
+
+def test_ingest_timeout_seconds_must_be_positive():
+    """Config validation rejects a non-positive ingest budget - a zero/negative
+    watchdog would either fire instantly (aborting every healthy ingest) or
+    never fire (no protection)."""
+    with pytest.raises(ValueError, match="ingest_timeout_seconds"):
+        ScheduleConfig(ingest_timeout_seconds=0)
