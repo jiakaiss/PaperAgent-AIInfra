@@ -3,6 +3,7 @@
 import os
 import tempfile
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from paper_agent.config import (
@@ -14,9 +15,12 @@ from paper_agent.config import (
     ScoringConfig,
     StorageConfig,
     SubscriptionConfig,
+    SubscriptionDefaultsConfig,
+    UnsubscribeConfig,
     UserConfig,
     UserNotifyConfig,
     UserThresholdsConfig,
+    WebConfig,
 )
 from paper_agent.models import Paper, ScoredPaper, ScoreWeights
 from paper_agent.pipeline import Pipeline
@@ -1278,5 +1282,145 @@ def test_pipeline_cached_digest_after_subscription_insert(mock_scorer_cls, mock_
 
         assert "late@example.com" in second
         assert [sp.paper.arxiv_id for sp in second["late@example.com"]] == ["001"]
+    finally:
+        os.unlink(db_path)
+
+
+# ─── Per-send unsubscribe token re-sign (fix-unsubscribe-token-and-digest-date) ───
+
+
+class _CapturingEmailNotifier:
+    """Fake email notifier that records the unsubscribe_url on its config.
+
+    Mirrors the real EmailNotifier's ``config`` attribute shape (an object
+    with a settable ``unsubscribe_url``) so the pipeline's per-send re-sign
+    path mutates and we can capture the value actually used at notify time.
+    """
+
+    def __init__(self) -> None:
+        self.name = "email"
+        self.config = SimpleNamespace(unsubscribe_url="STALE-STARTUP-TOKEN")
+        self.captured_unsubscribe_url: str | None = None
+        self.notified = False
+
+    def notify(self, papers: list[ScoredPaper]) -> bool:
+        self.captured_unsubscribe_url = self.config.unsubscribe_url
+        self.notified = True
+        return True
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_digest_re_signs_unsubscribe_token_at_send_time(mock_scorer_cls, mock_fetcher_cls):
+    """The unsubscribe link carries a token signed at send time, not startup.
+
+    Regression for the bug where the token timestamp was baked at daemon
+    startup / subscription creation and expired under long uptimes. The
+    pipeline now re-signs per send, so the token's embedded timestamp must
+    fall inside this test's execution window.
+    """
+    import time
+    from urllib.parse import parse_qs, urlparse
+
+    mock_fetcher_cls.return_value.fetch.return_value = [_make_paper("001")]
+    mock_scorer_cls.return_value.score.return_value = [
+        _make_scored_paper("001", tags=("quantization",))
+    ]
+
+    secret = "test-secret-123"
+    base_url = "https://papers.example.com"
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            web=WebConfig(public_base_url=base_url),
+            subscriptions=SubscriptionDefaultsConfig(
+                unsubscribe=UnsubscribeConfig(secret=secret, token_max_age_hours=720),
+            ),
+            users=[
+                UserConfig(
+                    user_id="alice@example.com",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(min_relevance=6.0, min_quality=5.0, top_n=10),
+                    notify=UserNotifyConfig(
+                        email=EmailNotifierConfig(
+                            enabled=True,
+                            smtp_host="smtp.example.com",
+                            smtp_user="test",
+                            smtp_password="pass",
+                            recipients=["alice@example.com"],
+                        )
+                    ),
+                ),
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        pipeline = Pipeline(config)
+        capturing = _CapturingEmailNotifier()
+        pipeline.user_notifiers["alice@example.com"] = [capturing]
+
+        before = time.time()
+        pipeline.run(dry_run=False)
+        after = time.time()
+
+        assert capturing.notified
+        url = capturing.captured_unsubscribe_url
+        assert url, "unsubscribe URL should be (re)generated at send time"
+        # The URL must point at the configured base, carry the recipient email,
+        # and embed a token whose timestamp falls in this test's window.
+        assert url.startswith(f"{base_url}/unsubscribe?")
+        qs = parse_qs(urlparse(url).query)
+        assert qs["email"][0] == "alice@example.com"
+        token = qs["token"][0]
+        ts = int(token.split(".", 1)[0])
+        assert before - 5 <= ts <= after + 5, (
+            f"token timestamp {ts} outside send window [{before - 5}, {after + 5}]"
+        )
+    finally:
+        os.unlink(db_path)
+
+
+@patch("paper_agent.pipeline.ArxivFetcher")
+@patch("paper_agent.pipeline.ClaudeScorer")
+def test_digest_no_unsubscribe_link_when_secret_unset(mock_scorer_cls, mock_fetcher_cls):
+    """Empty secret / base_url ⇒ empty unsubscribe URL, digest still sends.
+
+    No insecure plain unsubscribe link is generated when signing isn't
+    configured; the notifier simply sends without a link.
+    """
+    mock_fetcher_cls.return_value.fetch.return_value = [_make_paper("001")]
+    mock_scorer_cls.return_value.score.return_value = [
+        _make_scored_paper("001", tags=("quantization",))
+    ]
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        config = AppConfig(
+            fetch=FetchConfig(max_results=10, days_back=3),
+            scoring=ScoringConfig(batch_size=5),
+            # web.public_base_url and subscriptions.unsubscribe.secret both
+            # default to "" -> build_unsubscribe_url returns "".
+            users=[
+                UserConfig(
+                    user_id="alice@example.com",
+                    subscriptions=SubscriptionConfig(sub_domains=["quantization"]),
+                    thresholds=UserThresholdsConfig(min_relevance=6.0, min_quality=5.0, top_n=10),
+                ),
+            ],
+            schedule=ScheduleConfig(enabled=False),
+            storage=StorageConfig(db_path=db_path),
+        )
+        pipeline = Pipeline(config)
+        capturing = _CapturingEmailNotifier()
+        pipeline.user_notifiers["alice@example.com"] = [capturing]
+
+        pipeline.run(dry_run=False)
+
+        assert capturing.notified, "digest should still send without unsubscribe config"
+        assert capturing.captured_unsubscribe_url == ""
     finally:
         os.unlink(db_path)

@@ -305,3 +305,75 @@ def test_format_paper_line_includes_key_contributions():
     assert "贡献 X" in line
     assert "🎯 问题" in line
     assert "问题 Y" in line
+
+
+# ─── Per-paper published date in digest (fix-unsubscribe-token-and-digest-date) ───
+
+
+def test_email_html_shows_published_date():
+    """Per-paper card displays the published date as YYYY-MM-DD near the authors."""
+    sp = _make_scored_paper(1)  # published=datetime(2024, 1, 15)
+    html = format_email_html([sp])
+    assert "2024-01-15" in html
+    # The date sits in the authors metadata area: after authors, before summary.
+    assert html.index("Alice") < html.index("2024-01-15") < html.index(sp.summary_zh)
+
+
+def test_format_markdown_shows_published_date():
+    """Plain-text/markdown digest entry includes the published date."""
+    sp = _make_scored_paper(1)  # published=datetime(2024, 1, 15)
+    md = format_markdown([sp])
+    assert "📅 2024-01-15" in md
+
+
+def test_email_html_omits_date_when_published_missing():
+    """A paper with published=None renders without a date element and doesn't crash."""
+    paper = Paper(
+        arxiv_id="2401.99999v1",
+        title="No Date Paper",
+        authors=["Alice"],
+        abstract="abs",
+        published=None,
+        categories=["cs.DC"],
+        pdf_url="https://arxiv.org/pdf/2401.99999v1",
+        abs_url="https://arxiv.org/abs/2401.99999v1",
+    )
+    sp = ScoredPaper(
+        paper=paper,
+        relevance_score=8.0,
+        quality_score=7.0,
+        summary_zh="摘要",
+        sub_domain_tags=("quantization",),
+    )
+    html = format_email_html([sp])
+    # Card still renders with its other content intact.
+    assert "No Date Paper" in html
+    assert "相关度" in html
+    # The per-card date span (signature: margin-left:8px immediately before 📅)
+    # is absent. (The digest header's 📅 date is a separate element, not matched.)
+    assert 'margin-left:8px;">📅' not in html
+
+
+def test_format_markdown_omits_date_when_published_missing():
+    """Plain-text entry with published=None omits the date line, no crash."""
+    paper = Paper(
+        arxiv_id="2401.99999v1",
+        title="No Date Paper",
+        authors=["Alice"],
+        abstract="abs",
+        published=None,
+        categories=["cs.DC"],
+        pdf_url="https://arxiv.org/pdf/2401.99999v1",
+        abs_url="https://arxiv.org/abs/2401.99999v1",
+    )
+    sp = ScoredPaper(
+        paper=paper,
+        relevance_score=8.0,
+        quality_score=7.0,
+        summary_zh="摘要",
+        sub_domain_tags=("quantization",),
+    )
+    md = format_markdown([sp])
+    assert "No Date Paper" in md
+    # Markdown has no other 📅 usage, so its absence proves the date line was skipped.
+    assert "📅" not in md
