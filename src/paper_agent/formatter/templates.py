@@ -51,6 +51,10 @@ def format_paper_line(sp: ScoredPaper, index: int) -> str:
         f"   📊 相关度: {sp.relevance_score:.1f}/10  质量: {sp.quality_score:.1f}/10",
         f"   📝 {sp.summary_zh}",
     ]
+    # Published date as neutral metadata, right under the title. Guarded so a
+    # missing date is simply omitted (the rest of the entry is unaffected).
+    if sp.paper.published:
+        parts.insert(1, f"   📅 {sp.paper.published.strftime('%Y-%m-%d')}")
     if sp.key_contributions:
         bullets = "; ".join(sp.key_contributions)
         parts.append(f"   ✨ 关键贡献: {bullets}")
@@ -124,6 +128,15 @@ def _paper_row(sp: ScoredPaper, index: int) -> str:
     authors = ", ".join(sp.paper.authors[:5])
     if len(sp.paper.authors) > 5:
         authors += " et al."
+
+    # Published date as neutral metadata next to the authors (not a judgement
+    # badge). Guarded so a missing date renders nothing instead of crashing.
+    published_meta = ""
+    if sp.paper.published:
+        published_meta = (
+            f'<span style="color:#999; font-size:12px; margin-left:8px;">'
+            f"📅 {sp.paper.published.strftime('%Y-%m-%d')}</span>"
+        )
 
     tag_badges = (
         " ".join(
@@ -206,7 +219,7 @@ def _paper_row(sp: ScoredPaper, index: int) -> str:
                     {sp.paper.title}
                 </a>
                 <div style="color:#666; font-size:13px; margin-top:4px;">
-                    {authors}
+                    {authors}{published_meta}
                 </div>
                 <div style="color:#333; font-size:13px; margin-top:6px;">
                     {sp.summary_zh}

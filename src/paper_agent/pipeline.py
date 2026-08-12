@@ -22,6 +22,7 @@ from paper_agent.models import (
 from paper_agent.notifier import Notifier, create_notifiers_for_user
 from paper_agent.scorer.claude_scorer import ClaudeScorer
 from paper_agent.storage.database import PaperDatabase
+from paper_agent.subscriptions import build_unsubscribe_url
 
 logger = logging.getLogger(__name__)
 
@@ -548,8 +549,24 @@ class Pipeline:
             logger.info(f"  [{display}] [DRY RUN] Would send {len(to_send)} papers")
             self._print_results(display, to_send)
         else:
+            # Re-sign the unsubscribe token at send time so the link stays
+            # valid for token_max_age_hours from THIS send rather than from
+            # daemon startup / subscription creation time (see design.md,
+            # Decision 1). The notifier config is mutated per-send
+            # intentionally: the digest loop is single-threaded and each
+            # user's notifier is a singleton used only here. Returns "" when
+            # unsubscribe signing isn't configured, which the formatter
+            # renders as no link (no insecure plain unsubscribe URL).
+            unsubscribe_url = build_unsubscribe_url(
+                uid,
+                self.config.web.public_base_url,
+                self.config.subscriptions.unsubscribe.secret,
+            )
             any_success = False
             for notifier in notifiers:
+                cfg = getattr(notifier, "config", None)
+                if cfg is not None and hasattr(cfg, "unsubscribe_url"):
+                    cfg.unsubscribe_url = unsubscribe_url
                 logger.info(f"  [{display}] Sending via {notifier.name}...")
                 success = notifier.notify(to_send)
                 if success:
