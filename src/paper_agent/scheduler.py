@@ -6,6 +6,8 @@ import logging
 import os
 import signal
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import datetime
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -96,15 +98,39 @@ def start_daemon(
         # itself is exception-safe (degrades to previous list); any other
         # error in ingest is still caught by the outer handler below.
         pipeline.refresh_users()
+        timeout = config.schedule.ingest_timeout_seconds
+        # Run ingest in a worker thread with a hard wall-clock budget. A hung
+        # ingest (e.g. a network call that blocks past the per-request
+        # timeout, a DB lock, or an unanticipated deadlock) holds APScheduler's
+        # single ingest instance slot (max_instances=1) and blocks every
+        # future ingest until the process restarts — the 2026-07-24 arXiv
+        # stall blocked all ingests for 18 days this way. On timeout we abandon
+        # the worker thread (Python can't kill it) but RETURN, which releases
+        # the slot so the next scheduled tick can run. The per-request HTTP
+        # timeout in the fetcher ensures the orphaned thread terminates on its
+        # own rather than leaking forever.
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(pipeline.ingest)
         try:
-            pipeline.ingest()
+            future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            logger.error(
+                "Ingest exceeded %ds budget - abandoning this run to free the "
+                "scheduler slot. The worker thread will be left to terminate "
+                "on its own.",
+                timeout,
+            )
+            executor.shutdown(wait=False)
         except Exception as e:
             logger.error(f"Ingest failed: {e}", exc_info=True)
+            executor.shutdown(wait=False)
+        else:
+            executor.shutdown(wait=True)
         finally:
-            # Always tick the heartbeat — even if the job failed, the
-            # scheduler is alive and trying. A wedged scheduler stops
-            # ticking entirely, which is what the dashboard's "stale"
-            # status detects.
+            # Always tick the heartbeat — even if the job failed or timed out,
+            # the scheduler is alive and trying. A wedged scheduler stops
+            # ticking entirely, which is what the dashboard's "stale" status
+            # detects.
             write_heartbeat(db_path, started_at=started_at, last_event="ingest")
 
     def run_digest():

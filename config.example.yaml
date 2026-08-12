@@ -206,6 +206,9 @@ schedule:
   ingest_interval_minutes: 360   # interval 模式下的查询周期；被 ingest_hours 覆盖时忽略
   ingest_hours: [6, 18]          # cron 模式：每天 6:00 和 18:00 各拉一次；置 null 或省略则走 interval
   ingest_minute: 0               # cron 模式下统一的分钟
+  ingest_timeout_seconds: 5400   # 单次 ingest 最长挂钟时间（秒）。超时则放弃本次并释放调度槽，
+                                 # 防止卡死的 ingest 永久阻塞后续 ingest（默认 90 分钟，
+                                 # 需大于最慢的合法 ingest ~45 分钟，远小于 cron 间隔）
   digest_hour: 9                 # 每日用户推送小时
   digest_minute: 0               # 每日用户推送分钟
   timezone: Asia/Shanghai

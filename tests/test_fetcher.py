@@ -1,8 +1,16 @@
 """Tests for the dual-track fetcher logic (query building, cap math, dedup)."""
 
 from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
-from paper_agent.fetcher.arxiv_fetcher import ArxivFetcher
+import arxiv
+import requests
+
+from paper_agent.fetcher.arxiv_fetcher import (
+    _ARXIV_HTTP_TIMEOUT,
+    ArxivFetcher,
+    _TimeoutSession,
+)
 from paper_agent.models import Paper
 
 # ─── Legacy mode (quality_floor_strategy="none") ───
@@ -145,3 +153,59 @@ def test_dedup_keyword_wins_over_cross_list():
     assert len(all_papers) == 2
     assert all_papers[0].title == "From keyword"
     assert all_papers[1].title == "From cross-list (unique)"
+
+
+# ─── Per-request HTTP timeout (root-cause fix for the 2026-07-24 arXiv stall) ───
+
+
+def test_timeout_session_injects_default_timeout():
+    """``_TimeoutSession`` injects the default timeout when the caller omits
+    one - the property that prevents a stalled arXiv connection from blocking
+    the ingest thread forever (arxiv 4.0.0 calls ``session.get`` with no
+    timeout)."""
+    sess = _TimeoutSession()
+    with patch.object(requests.Session, "request", return_value=MagicMock()) as mock_req:
+        sess.get("http://example.com")
+    _, kwargs = mock_req.call_args
+    assert kwargs["timeout"] == _ARXIV_HTTP_TIMEOUT
+
+
+def test_timeout_session_preserves_explicit_timeout():
+    """An explicit timeout from the caller must not be overwritten."""
+    sess = _TimeoutSession()
+    with patch.object(requests.Session, "request", return_value=MagicMock()) as mock_req:
+        sess.get("http://example.com", timeout=5)
+    _, kwargs = mock_req.call_args
+    assert kwargs["timeout"] == 5
+
+
+class _CapturingClient:
+    """Stand-in for ``arxiv.Client`` that records its session attribute so we
+    can assert the fetcher swaps in a ``_TimeoutSession`` without hitting the
+    network."""
+
+    instances: list["_CapturingClient"] = []
+
+    def __init__(self, **kwargs):
+        self.init_kwargs = kwargs
+        self._session = None
+        _CapturingClient.instances.append(self)
+
+    def results(self, search):
+        return iter([])  # no papers -> _fetch_query returns immediately
+
+
+def test_fetcher_wires_timeout_session_into_arxiv_client(monkeypatch):
+    """``_fetch_query`` must replace the arxiv client's session with a
+    ``_TimeoutSession`` - this is the wiring that actually bounds real HTTP
+    calls, without which the 2026-07-24 hang recurs."""
+    _CapturingClient.instances = []
+    monkeypatch.setattr(arxiv, "Client", _CapturingClient)
+
+    fetcher = ArxivFetcher(keywords=["quantization"], quality_floor_strategy="per_keyword_cap")
+    fetcher._fetch_query('all:"quantization"', 10, datetime.now(UTC))
+
+    assert _CapturingClient.instances, "arxiv.Client was never constructed"
+    session = _CapturingClient.instances[-1]._session
+    assert isinstance(session, _TimeoutSession)
+    assert session._default_timeout == _ARXIV_HTTP_TIMEOUT
